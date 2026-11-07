@@ -241,6 +241,7 @@ function packageVsix(pkg) {
     'README.md',
     'out/extension.js',
     'media/viewer.css',
+    'media/agy-mermaid.js',
     'media/viewer.js',
     'media/icon.png',
     'media/icon.svg',
@@ -316,7 +317,16 @@ function runVerificationSuite() {
   assert.ok(extSource.includes("scheme: 'jetski-artifact'"), 'extension.js must support native jetski-artifact bridge');
   assert.ok(extSource.includes('claude-vscode.insertAtMention'), 'extension.js must support Claude Code @-mention selection');
   assert.ok(extSource.includes('workbench.action.chat.attachSelection'), 'extension.js must support VS Code Copilot Chat selection');
-  console.log('✓ Security & AI Chat integration checks passed');
+  assert.ok(extSource.includes('chatgpt.addToThread'), 'extension.js must support OpenAI Codex selection');
+  assert.ok(!extSource.includes("case 'selectionChanged'"), 'Selecting text must not open the raw text editor');
+  assert.ok(!viewerSource.includes("type: 'selectionChanged'"), 'viewer.js must not post selectionChanged');
+  assert.ok(viewerSource.includes('sendSelectionToPlatform'), 'viewer.js must send selection to a single platform');
+  const mermaidSource = fs.readFileSync(path.join(ROOT, 'media', 'agy-mermaid.js'), 'utf8');
+  assert.ok(!/\b(?:innerHTML|outerHTML|insertAdjacentHTML|document\.write|localStorage|sessionStorage)\b/.test(mermaidSource), 'agy-mermaid.js must not use unsafe DOM sinks');
+  require(path.join(ROOT, 'media', 'agy-mermaid.js'));
+  const nativeSvg = globalThis.renderAntigravityMermaidSvg('erDiagram\n  A ||--o{ B : has\n  A {\n    bigint id PK\n  }', false);
+  assert.ok(/^<svg[\s\S]*<\/svg>\s*$/.test(nativeSvg.trim()) && !nativeSvg.includes('@import'), 'Native Antigravity Mermaid engine must produce SVG');
+  console.log('✓ Security, per-platform AI Chat & native Mermaid engine checks passed');
 
   console.log('=== 4. Testing Markdown AST, Recursive LaTeX Parser & Mermaid ===');
   const viewer = require(path.join(ROOT, 'media', 'viewer.js'));

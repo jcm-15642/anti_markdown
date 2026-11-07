@@ -958,14 +958,15 @@
           continue;
         }
 
-        // 10. Symbol Lookup
+        // 10. Symbol Lookup (Greek letters in italic .agy-math-var, operators in .agy-math-op)
         if (Object.prototype.hasOwnProperty.call(LATEX_SYMBOLS, cmd)) {
-          parent.appendChild(el('span', 'agy-math-op', LATEX_SYMBOLS[cmd]));
+          const isGreekLetter = /^(?:alpha|beta|gamma|delta|epsilon|varepsilon|zeta|eta|theta|vartheta|iota|kappa|lambda|mu|nu|xi|pi|rho|sigma|tau|upsilon|phi|varphi|chi|psi|omega|Gamma|Delta|Theta|Lambda|Xi|Pi|Sigma|Upsilon|Phi|Psi|Omega|ell|hbar|partial|nabla)$/i.test(cmd);
+          parent.appendChild(el('span', isGreekLetter ? 'agy-math-var' : 'agy-math-op', LATEX_SYMBOLS[cmd]));
           continue;
         }
 
-        // Fallback: display command name cleanly
-        parent.appendChild(el('span', '', cmd));
+        // Fallback: display command name in italic math variable style
+        parent.appendChild(el('span', 'agy-math-var', cmd));
         continue;
       }
 
@@ -976,15 +977,22 @@
         continue;
       }
 
-      // Plain characters (variables, numbers, punctuation)
+      // Parentheses / brackets in math
+      if ('()[]|'.includes(ch)) {
+        parent.appendChild(el('span', 'agy-math-op', ch));
+        i++;
+        continue;
+      }
+
+      // Plain characters (variables, numbers, punctuation) rendered in italic math typography
       let runEnd = i + 1;
       while (
         runEnd < src.length &&
-        !/[\s\\{}_^+\-=<>]/.test(src[runEnd])
+        !/[\s\\{}_^+\-=<>()[\]|]/.test(src[runEnd])
       ) {
         runEnd++;
       }
-      parent.appendChild(document.createTextNode(src.slice(i, runEnd)));
+      parent.appendChild(el('span', 'agy-math-var', src.slice(i, runEnd)));
       i = runEnd;
     }
   }
@@ -1198,6 +1206,44 @@
       .filter((l) => l && !l.startsWith('%%'));
 
     const firstLine = rawLines[0] || '';
+    let diagramType = 'Flowchart';
+    if (/^erDiagram\b/i.test(firstLine)) {
+      diagramType = 'ER Diagram';
+    } else if (/^sequenceDiagram\b/i.test(firstLine)) {
+      diagramType = 'Sequence Diagram';
+    } else if (/^classDiagram\b/i.test(firstLine)) {
+      diagramType = 'Class Diagram';
+    } else if (/^xychart(-beta)?\b/i.test(firstLine)) {
+      diagramType = 'XY Chart';
+    } else if (/^pie\b/i.test(firstLine)) {
+      diagramType = 'Pie Chart';
+    } else if (/^stateDiagram/i.test(firstLine)) {
+      diagramType = 'State Diagram';
+    }
+
+    // Use Antigravity IDE's exact native Mermaid engine (ELK + Craft Docs beautiful-mermaid) when in Webview DOM
+    if (
+      typeof globalThis.renderAntigravityMermaidSvg === 'function' &&
+      typeof DOMParser !== 'undefined' &&
+      typeof document !== 'undefined' &&
+      typeof document.importNode === 'function'
+    ) {
+      try {
+        const isLight =
+          Boolean(document.body && document.body.classList && document.body.classList.contains('vscode-light'));
+        const svgStr = globalThis.renderAntigravityMermaidSvg(code, isLight);
+        const parsedDoc = new DOMParser().parseFromString(svgStr, 'image/svg+xml');
+        const svgNode = parsedDoc && parsedDoc.documentElement;
+        if (svgNode && svgNode.tagName && svgNode.tagName.toLowerCase() === 'svg') {
+          return {
+            diagramType,
+            svg: document.importNode(svgNode, true)
+          };
+        }
+      } catch (_err) {
+        // Fallback to built-in SVG builder if custom DSL fails
+      }
+    }
 
     if (/^erDiagram\b/i.test(firstLine)) {
       return {
@@ -1221,7 +1267,7 @@
     }
 
     return {
-      diagramType: /^stateDiagram/i.test(firstLine) ? 'State Diagram' : 'Flowchart',
+      diagramType,
       svg: renderFlowchartSvg(rawLines)
     };
   }
@@ -2542,8 +2588,139 @@
       renderSingleBlockContent(contentBox, block, callbacks);
       wrapper.appendChild(contentBox);
 
-      const startInPlaceEditing = () => {
-        if (wrapper.classList.contains('is-editing')) {
+      const isComplexVisualBlock =
+        block.type === 'mermaid' ||
+        block.type === 'mathBlock' ||
+        block.type === 'table' ||
+        block.type === 'code' ||
+        block.type === 'carousel';
+
+      // Mode 1: True In-Place Editing at Original Position (for heading, paragraph, alert, blockquote, list)
+      const startTrueInPlaceEditing = () => {
+        if (wrapper.classList.contains('is-editing-inplace') || wrapper.classList.contains('is-editing')) {
+          return;
+        }
+        wrapper.classList.add('is-editing-inplace');
+
+        const currentSlice =
+          callbacks && typeof callbacks.getBlockMarkdown === 'function'
+            ? callbacks.getBlockMarkdown(block.startLine, block.endLine)
+            : block.rawMarkdown || '';
+
+        let hostEl = contentBox;
+        let initialValue = currentSlice;
+        let serializeValue = (val) => val;
+
+        if (block.type === 'heading') {
+          const hEl = contentBox.querySelector('.agy-heading');
+          if (hEl) {
+            hostEl = hEl;
+          }
+          initialValue = block.text || currentSlice.replace(/^\s*#{1,6}\s+/, '');
+          const hashes = '#'.repeat(Math.min(6, Math.max(1, block.level || 1)));
+          serializeValue = (val) => {
+            const trimmed = val.replace(/\r?\n/g, ' ').trim();
+            if (/^\s*#{1,6}\s+/.test(trimmed)) {
+              return trimmed;
+            }
+            return `${hashes} ${trimmed}`;
+          };
+        } else if (block.type === 'alert') {
+          const alertBody = contentBox.querySelector('.agy-alert-body');
+          if (alertBody) {
+            hostEl = alertBody;
+          }
+          initialValue = block.body || '';
+          serializeValue = (val) => {
+            const quotedBody = String(val || '')
+              .split('\n')
+              .map((lineStr) => `> ${lineStr}`)
+              .join('\n');
+            return `> [!${block.alertType}]\n${quotedBody}`;
+          };
+        } else if (block.type === 'blockquote') {
+          const bqEl = contentBox.querySelector('.agy-blockquote');
+          if (bqEl) {
+            hostEl = bqEl;
+          }
+          initialValue = block.body || '';
+          serializeValue = (val) =>
+            String(val || '')
+              .split('\n')
+              .map((lineStr) => `> ${lineStr}`)
+              .join('\n');
+        } else if (block.type === 'paragraph') {
+          const pEl = contentBox.querySelector('.agy-p');
+          if (pEl) {
+            hostEl = pEl;
+          }
+          initialValue = currentSlice;
+        }
+
+        const inplaceInput = el('textarea', 'agy-inplace-editor', null, {
+          rows: Math.max(1, initialValue.split('\n').length)
+        });
+        inplaceInput.value = initialValue;
+
+        const autoFitHeight = () => {
+          inplaceInput.style.height = 'auto';
+          if (inplaceInput.scrollHeight > 0) {
+            inplaceInput.style.height = `${inplaceInput.scrollHeight}px`;
+          }
+        };
+
+        hostEl.replaceChildren(inplaceInput);
+        autoFitHeight();
+        inplaceInput.focus();
+
+        let activeStart = block.startLine;
+        let activeEnd = block.endLine;
+        let finished = false;
+
+        inplaceInput.addEventListener('input', () => {
+          autoFitHeight();
+          const updatedMd = serializeValue(inplaceInput.value);
+          if (callbacks && typeof callbacks.onBlockLiveEdit === 'function') {
+            const newEnd = callbacks.onBlockLiveEdit(activeStart, activeEnd, updatedMd);
+            if (typeof newEnd === 'number') {
+              activeEnd = newEnd;
+              wrapper.setAttribute('data-end-line', String(activeEnd + 1));
+            }
+          }
+        });
+
+        const finishInPlace = () => {
+          if (finished) return;
+          finished = true;
+          if (typeof document !== 'undefined' && document.removeEventListener) {
+            document.removeEventListener('mousedown', onOutsideMouseDown, true);
+          }
+          wrapper.classList.remove('is-editing-inplace');
+          if (callbacks && typeof callbacks.onBlockEditCommit === 'function') {
+            callbacks.onBlockEditCommit(true);
+          }
+        };
+
+        const onOutsideMouseDown = (ev) => {
+          if (!wrapper.contains(ev.target)) {
+            finishInPlace();
+          }
+        };
+
+        if (typeof document !== 'undefined' && document.addEventListener) {
+          document.addEventListener('mousedown', onOutsideMouseDown, true);
+        }
+
+        inplaceInput.addEventListener('blur', () => {
+          setTimeout(() => {
+            finishInPlace();
+          }, 10);
+        });
+      };
+
+      // Mode 2: Live Source + Live Preview Box Editing (for Mermaid, Math Block, Table, Code, Carousel)
+      const startBoxLiveEditing = () => {
+        if (wrapper.classList.contains('is-editing') || wrapper.classList.contains('is-editing-inplace')) {
           return;
         }
         wrapper.classList.add('is-editing');
@@ -2551,7 +2728,7 @@
         const editorBox = el('div', 'agy-inline-editor-box');
         const editorHeader = el('div', 'agy-inline-editor-header');
         editorHeader.appendChild(
-          el('span', '', `实时编辑 (第 ${startLine1} - ${endLine1} 行 · 输入即实时渲染，按 Esc 或 Ctrl+Enter 完成)`)
+          el('span', '', `实时编辑 (第 ${startLine1} - ${endLine1} 行 · 输入即实时渲染，点击编辑框外部自动保存)`)
         );
         const doneBtn = el('button', 'agy-block-btn', '✓ 完成');
         editorHeader.appendChild(doneBtn);
@@ -2573,6 +2750,7 @@
 
         let activeStart = block.startLine;
         let activeEnd = block.endLine;
+        let finished = false;
 
         // Live render & sync on every keystroke!
         textarea.addEventListener('input', () => {
@@ -2591,26 +2769,49 @@
         });
 
         const finishEditing = () => {
-          if (!wrapper.classList.contains('is-editing')) return;
+          if (finished || !wrapper.classList.contains('is-editing')) return;
+          finished = true;
+          if (typeof document !== 'undefined' && document.removeEventListener) {
+            document.removeEventListener('mousedown', onOutsideMouseDown, true);
+          }
           wrapper.classList.remove('is-editing');
           editorBox.remove();
           if (callbacks && typeof callbacks.onBlockEditCommit === 'function') {
-            callbacks.onBlockEditCommit();
+            callbacks.onBlockEditCommit(true);
           }
         };
+
+        const onOutsideMouseDown = (ev) => {
+          if (!wrapper.contains(ev.target)) {
+            finishEditing();
+          }
+        };
+
+        if (typeof document !== 'undefined' && document.addEventListener) {
+          document.addEventListener('mousedown', onOutsideMouseDown, true);
+        }
+
+        textarea.addEventListener('blur', (ev) => {
+          setTimeout(() => {
+            if (ev && ev.relatedTarget && wrapper.contains(ev.relatedTarget)) {
+              return;
+            }
+            finishEditing();
+          }, 20);
+        });
 
         doneBtn.addEventListener('click', (ev) => {
           ev.stopPropagation();
           finishEditing();
         });
+      };
 
-        textarea.addEventListener('keydown', (ev) => {
-          if (ev.key === 'Escape' || ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter')) {
-            ev.preventDefault();
-            ev.stopPropagation();
-            finishEditing();
-          }
-        });
+      const startInPlaceEditing = () => {
+        if (isComplexVisualBlock) {
+          startBoxLiveEditing();
+        } else {
+          startTrueInPlaceEditing();
+        }
       };
 
       editBtn.addEventListener('click', (ev) => {
@@ -2637,27 +2838,24 @@
         }
       });
 
-      // Click directly on text blocks (when not dragging a text selection) or double-click any block to edit in place!
+      // Click directly on regular content blocks (when not dragging a text selection) to edit directly in-place!
       wrapper.addEventListener('click', (ev) => {
-        if (wrapper.classList.contains('is-editing')) return;
+        if (wrapper.classList.contains('is-editing') || wrapper.classList.contains('is-editing-inplace')) return;
         const sel = typeof window !== 'undefined' && window.getSelection ? String(window.getSelection()).trim() : '';
         if (sel.length > 0) return;
         const targetTag = (ev.target && ev.target.tagName ? ev.target.tagName : '').toLowerCase();
         if (targetTag === 'a' || targetTag === 'button' || targetTag === 'input' || targetTag === 'textarea') {
           return;
         }
-        if (
-          block.type === 'paragraph' ||
-          block.type === 'heading' ||
-          block.type === 'blockquote' ||
-          block.type === 'alert'
-        ) {
-          startInPlaceEditing();
+        if (!isComplexVisualBlock && block.type !== 'hr') {
+          startTrueInPlaceEditing();
         }
       });
 
       wrapper.addEventListener('dblclick', (ev) => {
-        if (wrapper.classList.contains('is-editing')) return;
+        if (wrapper.classList.contains('is-editing') || wrapper.classList.contains('is-editing-inplace')) return;
+        const sel = typeof window !== 'undefined' && window.getSelection ? String(window.getSelection()).trim() : '';
+        if (sel.length > 0 && !isComplexVisualBlock) return;
         ev.stopPropagation();
         startInPlaceEditing();
       });
@@ -2717,16 +2915,45 @@
     topCenter.appendChild(btnSource);
 
     const topRight = el('div', 'agy-topbar-right');
-    const btnAiLink = el('button', 'agy-action-btn', '🎯 AI 选区联动');
-    btnAiLink.setAttribute(
-      'title',
-      '开启后，在预览界面选中文本将自动联动 VS Code 源码编辑器选区，让 VS Code Copilot Chat 和 Claude Code 实时显示文件名与行号'
-    );
+
+    // AI platform toggles (top menu): choose which platforms appear in the floating capsule
+    const AI_PLATFORMS = [
+      { id: 'vscode', icon: '💬', label: 'VS Code' },
+      { id: 'antigravity', icon: '✦', label: 'Antigravity' },
+      { id: 'claude', icon: '✴', label: 'Claude Code' },
+      { id: 'codex', icon: '◎', label: 'Codex' }
+    ];
+    state.enabledAiPlatforms = AI_PLATFORMS.map((p) => p.id);
+    const aiPlatformGroup = el('div', 'agy-ai-platform-group', null, {
+      title: '选择启用的 AI 平台（选中文本后，悬浮胶囊中仅显示已启用的平台）'
+    });
+    aiPlatformGroup.appendChild(el('span', 'agy-ai-platform-label', 'AI 平台'));
+    const aiPlatformButtons = {};
+    AI_PLATFORMS.forEach((p) => {
+      const b = el('button', 'agy-ai-platform-btn active', p.label, { 'data-platform': p.id });
+      b.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const set = new Set(state.enabledAiPlatforms);
+        if (set.has(p.id)) {
+          set.delete(p.id);
+        } else {
+          set.add(p.id);
+        }
+        state.enabledAiPlatforms = AI_PLATFORMS.map((x) => x.id).filter((id) => set.has(id));
+        refreshAiPlatformUi();
+        if (vscode) {
+          vscode.postMessage({ type: 'updateAiPlatforms', platforms: state.enabledAiPlatforms });
+        }
+      });
+      aiPlatformButtons[p.id] = b;
+      aiPlatformGroup.appendChild(b);
+    });
+
     const btnOutline = el('button', 'agy-action-btn', '☰ 目录大纲');
     const btnNative = el('button', 'agy-action-btn primary', '✦ 原生内置视图 (jetski)');
     btnNative.setAttribute('title', '调用 Antigravity IDE 原生内置 antigravity.artifactEditor 打开当前文档');
     const btnTextEditor = el('button', 'agy-action-btn', '⟨/⟩ 文本编辑器');
-    topRight.appendChild(btnAiLink);
+    topRight.appendChild(aiPlatformGroup);
     topRight.appendChild(btnOutline);
     topRight.appendChild(btnNative);
     topRight.appendChild(btnTextEditor);
@@ -2764,11 +2991,16 @@
     workspace.appendChild(editorPane);
     workspace.appendChild(previewPane);
 
-    // Floating Selection AI Action Pill
+    // Floating Selection AI Capsule (enabled platforms shown unfolded side-by-side)
     const selectionBar = el('div', 'agy-selection-bar hidden');
-    const selChatBtn = el('button', 'agy-selection-pill-btn', '📌 发送到 AI 聊天 (Ctrl+L)');
+    const selRangeBadge = el('span', 'agy-selection-range-badge', 'L1-1');
+    const selPlatformWrap = el('span', 'agy-selection-platforms');
+    selPlatformWrap.style.display = 'inline-flex';
+    selPlatformWrap.style.gap = '5px';
+    selPlatformWrap.style.flexWrap = 'wrap';
     const selReviewBtn = el('button', 'agy-selection-pill-btn secondary', '+ 批注');
-    selectionBar.appendChild(selChatBtn);
+    selectionBar.appendChild(selRangeBadge);
+    selectionBar.appendChild(selPlatformWrap);
     selectionBar.appendChild(selReviewBtn);
 
     // Floating Review Modal
@@ -2812,17 +3044,45 @@
     btnSource.addEventListener('click', () => applyViewMode('source'));
     btnOutline.addEventListener('click', () => applyOutlineVisibility(!state.showOutline));
 
-    btnAiLink.addEventListener('click', () => {
-      if (vscode) {
-        const currentRange = resolveDomSelectionLineRange();
-        vscode.postMessage({
-          type: 'toggleAiCompanion',
-          startLineNumber: currentRange.startLineNumber,
-          endLineNumber: currentRange.endLineNumber,
-          selectedText: currentRange.selectedText
+    /**
+     * Send a line range to one specific AI platform.
+     * @param {string} platform
+     * @param {{startLineNumber:number,endLineNumber:number,selectedText:string}} range
+     */
+    function sendRangeToPlatform(platform, range) {
+      if (!vscode) return;
+      vscode.postMessage({
+        type: 'sendSelectionToPlatform',
+        platform,
+        startLineNumber: range.startLineNumber,
+        endLineNumber: range.endLineNumber,
+        selectedText: range.selectedText
+      });
+    }
+
+    function refreshAiPlatformUi() {
+      const enabled = new Set(state.enabledAiPlatforms);
+      AI_PLATFORMS.forEach((p) => {
+        aiPlatformButtons[p.id].classList.toggle('active', enabled.has(p.id));
+      });
+      selPlatformWrap.replaceChildren();
+      AI_PLATFORMS.filter((p) => enabled.has(p.id)).forEach((p) => {
+        const b = el('button', 'agy-selection-pill-btn', `${p.icon} ${p.label}`, {
+          title: `仅发送到 ${p.label} 聊天框`
         });
+        b.addEventListener('mousedown', (ev) => ev.preventDefault());
+        b.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          sendRangeToPlatform(p.id, lastSelectionRange);
+          selectionBar.classList.add('hidden');
+        });
+        selPlatformWrap.appendChild(b);
+      });
+      if (enabled.size === 0) {
+        selPlatformWrap.appendChild(el('span', 'agy-ai-platform-label', '未启用 AI 平台（顶部菜单开启）'));
       }
-    });
+    }
+    refreshAiPlatformUi();
 
     btnNative.addEventListener('click', () => {
       if (vscode) {
@@ -2925,7 +3185,7 @@
 
     let lastSelectionRange = { startLineNumber: 1, endLineNumber: 1, selectedText: '' };
 
-    // Detect text selection in Preview to show Floating AI Action Pill & sync with Host Editor
+    // Detect text selection in Preview: only show the floating AI capsule (never opens any text editor)
     document.addEventListener('mouseup', (ev) => {
       if (selectionBar.contains(ev.target)) {
         return;
@@ -2940,36 +3200,16 @@
 
         const info = resolveDomSelectionLineRange();
         lastSelectionRange = info;
-        selChatBtn.textContent = `📌 发送到 AI 聊天 (L${info.startLineNumber}-${info.endLineNumber} · Ctrl+L)`;
+        selRangeBadge.textContent = `L${info.startLineNumber}-${info.endLineNumber}`;
+        refreshAiPlatformUi();
 
-        const x = Math.min(window.innerWidth - 320, Math.max(16, ev.clientX - 80));
-        const y = Math.max(52, ev.clientY - 46);
+        selectionBar.classList.remove('hidden');
+        const barWidth = selectionBar.offsetWidth || 420;
+        const x = Math.min(window.innerWidth - barWidth - 12, Math.max(12, ev.clientX - 80));
+        const y = Math.max(52, ev.clientY - 48);
         selectionBar.style.left = `${x}px`;
         selectionBar.style.top = `${y}px`;
-        selectionBar.classList.remove('hidden');
-
-        if (vscode) {
-          vscode.postMessage({
-            type: 'selectionChanged',
-            startLineNumber: info.startLineNumber,
-            endLineNumber: info.endLineNumber,
-            selectedText: info.selectedText
-          });
-        }
       }, 20);
-    });
-
-    selChatBtn.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      if (vscode) {
-        vscode.postMessage({
-          type: 'addSelectionToChat',
-          startLineNumber: lastSelectionRange.startLineNumber,
-          endLineNumber: lastSelectionRange.endLineNumber,
-          selectedText: lastSelectionRange.selectedText
-        });
-      }
-      selectionBar.classList.add('hidden');
     });
 
     selReviewBtn.addEventListener('click', (ev) => {
@@ -3000,15 +3240,23 @@
 
     // Live editing in Split / Source mode
     let editTimer = null;
-    function pushTextEditToExtension(newText) {
+    function pushTextEditToExtension(newText, autoSave) {
       state.text = newText;
       if (document.activeElement !== sourceTextarea) {
         sourceTextarea.value = newText;
       }
       if (editTimer) {
         clearTimeout(editTimer);
+        editTimer = null;
+      }
+      if (autoSave) {
+        if (vscode) {
+          vscode.postMessage({ type: 'edit', text: state.text, autoSave: true });
+        }
+        return;
       }
       editTimer = setTimeout(() => {
+        editTimer = null;
         if (vscode) {
           vscode.postMessage({ type: 'edit', text: state.text });
         }
@@ -3035,12 +3283,9 @@
         ev.preventDefault();
         if (vscode) {
           const info = resolveDomSelectionLineRange();
-          vscode.postMessage({
-            type: 'addSelectionToChat',
-            startLineNumber: info.startLineNumber,
-            endLineNumber: info.endLineNumber,
-            selectedText: info.selectedText
-          });
+          // Ctrl+L sends to the first enabled platform (current preferred platform)
+          const preferred = state.enabledAiPlatforms[0] || '';
+          sendRangeToPlatform(preferred, info);
         }
       }
     });
@@ -3060,18 +3305,15 @@
         pushTextEditToExtension(lines.join('\n'));
         return startLine + replacementLines.length - 1;
       },
-      onBlockEditCommit() {
+      onBlockEditCommit(autoSave) {
+        if (autoSave) {
+          pushTextEditToExtension(state.text, true);
+        }
         renderDocument();
       },
       onAddRangeToChat(startLineNumber, endLineNumber, snippetText) {
-        if (vscode) {
-          vscode.postMessage({
-            type: 'addSelectionToChat',
-            startLineNumber,
-            endLineNumber,
-            selectedText: snippetText
-          });
-        }
+        const preferred = state.enabledAiPlatforms[0] || '';
+        sendRangeToPlatform(preferred, { startLineNumber, endLineNumber, selectedText: snippetText });
       },
       onOpenFileLink(href) {
         if (vscode) {
@@ -3170,19 +3412,21 @@
       const msg = event.data;
       if (!msg) return;
 
-      if (msg.type === 'aiCompanionState') {
-        state.aiCompanionEnabled = Boolean(msg.enabled);
-        btnAiLink.classList.toggle('primary', state.aiCompanionEnabled);
-        btnAiLink.textContent = state.aiCompanionEnabled ? '🎯 AI 联动已开启' : '🎯 AI 选区联动';
-        return;
-      }
-
       if (msg.type !== 'documentUpdate') {
         return;
       }
 
+      if (msg.config && Array.isArray(msg.config.enabledAiPlatforms)) {
+        state.enabledAiPlatforms = AI_PLATFORMS.map((p) => p.id).filter((id) =>
+          msg.config.enabledAiPlatforms.includes(id)
+        );
+        refreshAiPlatformUi();
+      }
+
       // Avoid overwriting an active inline block editor while the user is typing in it
-      const activeInlineEditor = document.querySelector('.agy-editable-block.is-editing');
+      const activeInlineEditor = document.querySelector(
+        '.agy-editable-block.is-editing, .agy-editable-block.is-editing-inplace'
+      );
       if (activeInlineEditor && msg.text === state.text) {
         state.isDirty = Boolean(msg.isDirty);
         dirtyDot.style.display = state.isDirty ? 'inline-block' : 'none';

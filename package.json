@@ -2,7 +2,7 @@
   "name": "antigravity-markdown-viewer",
   "displayName": "Antigravity Markdown Viewer",
   "description": "Preview and edit any project Markdown (.md) file with Antigravity IDE's built-in Artifact Viewer (native bridge + standalone Custom Editor with direct in-preview live editing, draggable Mermaid, KaTeX math, Alerts, Carousels, file:// pills, and Copilot/Claude Code/Antigravity selection sync).",
-  "version": "1.1.0",
+  "version": "1.2.1",
   "publisher": "mazhao",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -193,12 +193,31 @@
           "type": "boolean",
           "default": true,
           "description": "Show the collapsible Table of Contents (TOC) outline sidebar by default."
+        },
+        "antiMarkdown.enabledAiPlatforms": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "vscode",
+              "antigravity",
+              "claude",
+              "codex"
+            ]
+          },
+          "default": [
+            "vscode",
+            "antigravity",
+            "claude",
+            "codex"
+          ],
+          "description": "Enabled AI chat platforms shown in the top menu bar and unfolded in the floating selection capsule."
         }
       }
     }
   },
   "scripts": {
-    "check": "node --check out/extension.js && node --check media/viewer.js",
+    "check": "node --check out/extension.js && node --check media/agy-mermaid.js && node --check media/viewer.js",
     "test": "node test/verify.js",
     "build": "node test/verify.js --bump"
   }

@@ -146,6 +146,52 @@ body {
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.agy-ai-platform-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background-color: var(--agy-bg);
+  border: 1px solid var(--agy-border);
+}
+
+.agy-ai-platform-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--agy-fg-muted);
+  margin-right: 2px;
+  white-space: nowrap;
+}
+
+.agy-ai-platform-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  background-color: transparent;
+  color: var(--agy-fg-subtle);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: all 0.14s ease;
+}
+
+.agy-ai-platform-btn:hover {
+  color: var(--agy-fg);
+  background-color: var(--agy-surface);
+}
+
+.agy-ai-platform-btn.active {
+  background-color: var(--agy-accent-bg);
+  color: var(--agy-accent);
+  border-color: color-mix(in srgb, var(--agy-accent) 42%, transparent);
+  font-weight: 600;
 }
 
 .agy-action-btn {
@@ -780,16 +826,19 @@ h6.agy-heading {
   position: relative;
   width: 100%;
   min-height: 220px;
-  max-height: 600px;
+  max-height: 640px;
   overflow: hidden;
-  padding: 24px;
+  padding: 20px;
   display: flex;
   justify-content: center;
   align-items: center;
-  background: radial-gradient(color-mix(in srgb, var(--agy-fg) 10%, transparent) 1px, transparent 1px);
-  background-size: 18px 18px;
+  background-color: #18181b;
   cursor: grab;
   user-select: none;
+}
+
+body.vscode-light .agy-mermaid-viewport {
+  background-color: #ffffff;
 }
 
 .agy-mermaid-viewport.is-dragging {
@@ -798,12 +847,48 @@ h6.agy-heading {
 
 .agy-mermaid-stage {
   transform-origin: center center;
-  transition: transform 0.08s ease-out;
+  transition: transform 0.06s ease-out;
   will-change: transform;
+  display: inline-flex;
+  justify-content: center;
+  align-items: center;
 }
 
 .agy-mermaid-stage.is-dragging {
   transition: none;
+}
+
+.agy-mermaid-stage svg {
+  display: block;
+  max-width: none;
+  border-radius: 8px;
+  --bg: #18181b;
+  --fg: #f4f4f5;
+  --line: #71717a;
+  --muted: #a1a1aa;
+  --surface: #27272a;
+  --border: #3f3f46;
+  --_text: var(--fg);
+  --_text-sec: var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+  --_text-muted: var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+  --_text-faint: color-mix(in srgb, var(--fg) 25%, var(--bg));
+  --_line: var(--line, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+  --_arrow: var(--accent, color-mix(in srgb, var(--fg) 85%, var(--bg)));
+  --_node-fill: var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+  --_node-stroke: var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+  --_group-fill: var(--bg);
+  --_group-hdr: color-mix(in srgb, var(--fg) 5%, var(--bg));
+  --_inner-stroke: color-mix(in srgb, var(--fg) 12%, var(--bg));
+  --_key-badge: color-mix(in srgb, var(--fg) 10%, var(--bg));
+}
+
+body.vscode-light .agy-mermaid-stage svg {
+  --bg: #ffffff;
+  --fg: #1e293b;
+  --line: #64748b;
+  --muted: #475569;
+  --surface: #f8fafc;
+  --border: #cbd5e1;
 }
 
 .agy-mermaid-source {
@@ -876,13 +961,14 @@ h6.agy-heading {
   padding: 18px 22px;
 }
 
-/* KaTeX / LaTeX Math Formatting */
+/* KaTeX / LaTeX Math Formatting (Italic Mathematical Typography) */
 .agy-math-inline {
   display: inline-flex;
   align-items: baseline;
   flex-wrap: wrap;
   gap: 1px;
-  font-family: "KaTeX_Main", "Cambria Math", "STIX Two Math", "Latin Modern Math", Georgia, serif;
+  font-family: "KaTeX_Math", "Cambria Math", "STIX Two Math", "Latin Modern Math", "Times New Roman", Georgia, serif;
+  font-style: italic;
   font-size: 1.06em;
   padding: 0 3px;
   color: var(--agy-fg);
@@ -899,9 +985,18 @@ h6.agy-heading {
   align-items: center;
   flex-wrap: wrap;
   gap: 2px;
-  font-family: "KaTeX_Main", "Cambria Math", "STIX Two Math", "Latin Modern Math", Georgia, serif;
+  font-family: "KaTeX_Math", "Cambria Math", "STIX Two Math", "Latin Modern Math", "Times New Roman", Georgia, serif;
+  font-style: italic;
   font-size: 1.22em;
   overflow-x: auto;
+}
+
+.agy-math-var {
+  font-style: italic;
+}
+
+.agy-math-num {
+  font-style: italic;
 }
 
 .agy-math-frac {
@@ -912,6 +1007,7 @@ h6.agy-heading {
   text-align: center;
   padding: 0 5px;
   margin: 0 2px;
+  font-style: italic;
 }
 
 .agy-math-frac-num {
@@ -920,6 +1016,7 @@ h6.agy-heading {
   font-size: 0.88em;
   line-height: 1.25;
   width: 100%;
+  font-style: italic;
 }
 
 .agy-math-frac-den {
@@ -927,6 +1024,7 @@ h6.agy-heading {
   font-size: 0.88em;
   line-height: 1.25;
   width: 100%;
+  font-style: italic;
 }
 
 .agy-math-sqrt {
@@ -934,6 +1032,7 @@ h6.agy-heading {
   align-items: stretch;
   vertical-align: middle;
   margin: 0 2px;
+  font-style: italic;
 }
 
 .agy-math-sqrt-sign {
@@ -942,11 +1041,13 @@ h6.agy-heading {
   padding-right: 1px;
   display: flex;
   align-items: center;
+  font-style: normal;
 }
 
 .agy-math-sqrt-body {
   border-top: 1.2px solid currentColor;
   padding: 1px 4px 0 3px;
+  font-style: italic;
 }
 
 .agy-math-script {
@@ -957,6 +1058,7 @@ h6.agy-heading {
   font-size: 0.75em;
   line-height: 1.1;
   margin-left: 1px;
+  font-style: italic;
 }
 
 .agy-math-sup {
@@ -964,6 +1066,7 @@ h6.agy-heading {
   vertical-align: super;
   line-height: 1;
   margin-left: 1px;
+  font-style: italic;
 }
 
 .agy-math-sub {
@@ -971,16 +1074,19 @@ h6.agy-heading {
   vertical-align: sub;
   line-height: 1;
   margin-left: 1px;
+  font-style: italic;
 }
 
 .agy-math-overline {
   border-top: 1px solid currentColor;
   padding-top: 1px;
+  font-style: italic;
 }
 
 .agy-math-underline {
   border-bottom: 1px solid currentColor;
   padding-bottom: 1px;
+  font-style: italic;
 }
 
 .agy-math-cal {
@@ -991,6 +1097,7 @@ h6.agy-heading {
 
 .agy-math-bb {
   font-weight: 700;
+  font-style: italic;
   letter-spacing: 0.02em;
 }
 
@@ -1002,6 +1109,7 @@ h6.agy-heading {
 
 .agy-math-op {
   padding: 0 3px;
+  font-style: normal;
 }
 
 .agy-math-matrix {
@@ -1012,6 +1120,7 @@ h6.agy-heading {
   border-radius: 4px;
   padding: 2px 6px;
   margin: 0 4px;
+  font-style: italic;
 }
 
 .agy-math-matrix-row {
@@ -1022,6 +1131,7 @@ h6.agy-heading {
   display: table-cell;
   padding: 2px 8px;
   text-align: center;
+  font-style: italic;
 }
 
 /* Direct In-Preview Editable Block & Live Editor */
@@ -1032,14 +1142,40 @@ h6.agy-heading {
 }
 
 .agy-editable-block:hover {
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--agy-accent) 28%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--agy-accent) 24%, transparent);
 }
 
+/* Complex visual block editing (Mermaid, Math Block, Table, Code, Carousel) */
 .agy-editable-block.is-editing {
   background-color: color-mix(in srgb, var(--agy-surface) 85%, transparent);
   box-shadow: 0 0 0 1.5px var(--agy-accent);
   padding: 12px 14px;
   margin: 12px -14px;
+}
+
+/* Seamless In-Place Editing at Original Position (Heading, Paragraph, Alert, Blockquote, List) */
+.agy-editable-block.is-editing-inplace {
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--agy-accent) 55%, transparent);
+  border-radius: 6px;
+}
+
+.agy-inplace-editor {
+  display: block;
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font-family: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  letter-spacing: inherit;
+  padding: 0;
+  margin: 0;
+  resize: none;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 .agy-block-toolbar {
@@ -1059,6 +1195,11 @@ h6.agy-heading {
 .agy-editable-block.is-editing > .agy-block-toolbar {
   opacity: 1;
   pointer-events: auto;
+}
+
+.agy-editable-block.is-editing-inplace > .agy-block-toolbar {
+  opacity: 0;
+  pointer-events: none;
 }
 
 .agy-block-btn {
@@ -1129,13 +1270,14 @@ h6.agy-heading {
   color: var(--agy-fg-muted);
 }
 
-/* Floating Selection AI Action Pill */
+/* Floating Selection AI Action Capsule (Unfolded Per-Platform Buttons) */
 .agy-selection-bar {
   position: fixed;
   z-index: 120;
   display: flex;
   align-items: center;
-  gap: 6px;
+  flex-wrap: wrap;
+  gap: 5px;
   padding: 5px 8px;
   border-radius: 8px;
   background-color: var(--agy-surface-elevated);
@@ -1145,6 +1287,18 @@ h6.agy-heading {
 
 .agy-selection-bar.hidden {
   display: none;
+}
+
+.agy-selection-range-badge {
+  font-family: var(--agy-font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--agy-fg-muted);
+  padding: 2px 6px;
+  border-radius: 4px;
+  background-color: var(--agy-bg);
+  border: 1px solid var(--agy-border);
+  user-select: none;
 }
 
 .agy-selection-pill-btn {
@@ -1158,6 +1312,7 @@ h6.agy-heading {
   padding: 3px 9px;
   border-radius: 5px;
   cursor: pointer;
+  white-space: nowrap;
 }
 
 .agy-selection-pill-btn:hover {

@@ -280,12 +280,13 @@ async function openFileTargetInEditor(rawHref, documentUri) {
 function buildWebviewHtml(webview, context) {
   const nonce = createNonce();
   const cssUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', 'viewer.css'));
+  const mermaidJsUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', 'agy-mermaid.js'));
   const jsUri = webview.asWebviewUri(vscode.Uri.joinPath(context.extensionUri, 'media', 'viewer.js'));
 
   const csp = [
     "default-src 'none'",
     `img-src ${webview.cspSource} https: data:`,
-    `style-src ${webview.cspSource}`,
+    `style-src ${webview.cspSource} 'unsafe-inline'`,
     `script-src 'nonce-${nonce}'`,
     `font-src ${webview.cspSource} data:`
   ].join('; ');
@@ -302,6 +303,7 @@ function buildWebviewHtml(webview, context) {
     '</head>',
     '<body>',
     '  <div id="app-root" class="agy-root"></div>',
+    `  <script nonce="${nonce}" src="${mermaidJsUri}"></script>`,
     `  <script nonce="${nonce}" src="${jsUri}"></script>`,
     '</body>',
     '</html>'
@@ -361,6 +363,12 @@ function createDocumentPayload(document, webview, isSidePreview) {
     lastModified = new Date().toISOString();
   }
 
+  const rawPlatforms = config.get('enabledAiPlatforms', ['vscode', 'antigravity', 'claude', 'codex']);
+  const enabledAiPlatforms =
+    Array.isArray(rawPlatforms) && rawPlatforms.length > 0
+      ? rawPlatforms
+      : ['vscode', 'antigravity', 'claude', 'codex'];
+
   return {
     type: 'documentUpdate',
     text: document.getText(),
@@ -374,7 +382,8 @@ function createDocumentPayload(document, webview, isSidePreview) {
     lastModified,
     config: {
       defaultViewMode: config.get('defaultViewMode', 'preview'),
-      showOutline: config.get('showOutline', true)
+      showOutline: config.get('showOutline', true),
+      enabledAiPlatforms
     }
   };
 }
@@ -420,52 +429,153 @@ function buildDocumentSelection(document, startLineNumber, endLineNumber, select
 }
 
 /**
- * Synchronize selection from the Custom Editor Webview to a real vscode.TextEditor
- * so that VS Code Copilot Chat (ChatImplicitContext), Claude Code (onDidChangeTextEditorSelection
- * & visibleTextEditors), and Antigravity IDE (EditorStateWatcher) all recognize the file and line range.
+ * Find any temporary raw text editor tab (`TabInputText`) for the given document URI.
+ * @param {vscode.Uri} docUri
+ * @returns {vscode.Tab[]}
+ */
+function findRawTextTabsForUri(docUri) {
+  const targetStr = docUri.toString();
+  const matches = [];
+  try {
+    const groups = vscode.window.tabGroups?.all || [];
+    for (const group of groups) {
+      for (const tab of group.tabs || []) {
+        const input = tab.input;
+        if (
+          input &&
+          typeof input === 'object' &&
+          input.uri instanceof vscode.Uri &&
+          typeof input.viewType !== 'string' &&
+          input.uri.toString() === targetStr
+        ) {
+          matches.push(tab);
+        }
+      }
+    }
+  } catch (_err) {
+    // Ignore on older host versions
+  }
+  return matches;
+}
+
+/**
+ * Send the selected file + line range to a single specific AI platform
+ * (`vscode`, `antigravity`, `claude`, or `codex`) without leaving a raw text editor open.
  * @param {vscode.TextDocument} document
  * @param {vscode.WebviewPanel} webviewPanel
  * @param {object} msg
- * @param {boolean} forceOpenCompanion
  */
-async function syncSelectionToHostEditor(document, webviewPanel, msg, forceOpenCompanion) {
+async function sendSelectionToSinglePlatform(document, webviewPanel, msg) {
   const startLineNumber = Math.max(1, Number(msg.startLineNumber) || 1);
   const endLineNumber = Math.max(startLineNumber, Number(msg.endLineNumber) || startLineNumber);
   const selection = buildDocumentSelection(document, startLineNumber, endLineNumber, msg.selectedText);
+  const cleanUri = normalizeMarkdownUri(document.uri);
+  const fileUriStr = cleanUri.toString();
+  const availableCommands = await vscode.commands.getCommands(true);
 
+  let platform = typeof msg.platform === 'string' ? msg.platform.toLowerCase() : '';
+  if (!platform) {
+    if (availableCommands.includes('antigravity.addContext')) {
+      platform = 'antigravity';
+    } else if (availableCommands.includes('claude-vscode.insertAtMention')) {
+      platform = 'claude';
+    } else if (availableCommands.includes('chatgpt.addToThread')) {
+      platform = 'codex';
+    } else {
+      platform = 'vscode';
+    }
+  }
+
+  // 1. Antigravity IDE: direct RPC command, never touches any raw text editor
+  if (platform === 'antigravity') {
+    if (availableCommands.includes('antigravity.addContext')) {
+      try {
+        await vscode.commands.executeCommand('antigravity.addContext', {
+          type: 'file',
+          uri: fileUriStr,
+          range: {
+            startLineNumber,
+            endLineNumber
+          }
+        });
+        return;
+      } catch (_err) {
+        // Fallback below if command failed
+      }
+    }
+    vscode.window.showWarningMessage('当前环境未检测到 Antigravity IDE 内置聊天接口 (antigravity.addContext)。');
+    return;
+  }
+
+  // For VS Code Copilot, Claude Code, and OpenAI Codex:
+  // Their commands inspect `vscode.window.activeTextEditor` and `activeTextEditor.selection`.
+  // If no raw text editor is already open, we perform a fast transient handoff and immediately
+  // close the temporary raw text editor tab so the user stays in the preview.
+  const preExistingTabs = findRawTextTabsForUri(document.uri);
   let targetEditor = vscode.window.visibleTextEditors.find(
     (ed) => ed.document && ed.document.uri.toString() === document.uri.toString()
   );
+  const openedTransiently = !targetEditor && preExistingTabs.length === 0;
 
-  if (!targetEditor && forceOpenCompanion) {
-    const targetColumn =
-      webviewPanel.viewColumn === vscode.ViewColumn.One
-        ? vscode.ViewColumn.Beside
-        : vscode.ViewColumn.One;
+  try {
     targetEditor = await vscode.window.showTextDocument(document, {
-      viewColumn: targetColumn,
+      viewColumn: targetEditor ? targetEditor.viewColumn : webviewPanel.viewColumn || vscode.ViewColumn.Active,
       preview: true,
       preserveFocus: false
     });
-  }
-
-  if (targetEditor) {
     targetEditor.selection = selection;
     targetEditor.selections = [selection];
     targetEditor.revealRange(
       new vscode.Range(selection.start, selection.end),
       vscode.TextEditorRevealType.InCenterIfOutsideViewport
     );
-    // Briefly activate the TextEditor so VS Code Copilot Chat & Claude Code
-    // pass their `event.textEditor === vscode.window.activeTextEditor` check
-    await vscode.window.showTextDocument(document, {
-      viewColumn: targetEditor.viewColumn,
-      preview: true,
-      preserveFocus: false
-    });
-  }
 
-  return { targetEditor, selection, startLineNumber, endLineNumber };
+    // Wait briefly so VS Code extension host dispatches onDidChangeActiveTextEditor / Selection
+    await new Promise((resolve) => setTimeout(resolve, 45));
+
+    if (platform === 'claude') {
+      if (availableCommands.includes('claude-vscode.insertAtMention')) {
+        await vscode.commands.executeCommand('claude-vscode.insertAtMention');
+      } else if (availableCommands.includes('claude-code.insertAtMentioned')) {
+        await vscode.commands.executeCommand('claude-code.insertAtMentioned');
+      } else {
+        vscode.window.showWarningMessage('当前环境未检测到 Claude Code 插件 (claude-vscode.insertAtMention)。');
+      }
+    } else if (platform === 'codex') {
+      if (availableCommands.includes('chatgpt.addToThread')) {
+        await vscode.commands.executeCommand('chatgpt.addToThread');
+      } else {
+        vscode.window.showWarningMessage('当前环境未检测到 OpenAI Codex 插件 (chatgpt.addToThread)。');
+      }
+    } else if (platform === 'vscode') {
+      if (availableCommands.includes('workbench.action.chat.attachSelection')) {
+        await vscode.commands.executeCommand('workbench.action.chat.attachSelection');
+      }
+      if (availableCommands.includes('workbench.action.chat.open')) {
+        await vscode.commands.executeCommand('workbench.action.chat.open');
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 65));
+  } catch (_err) {
+    // Ignore command execution errors
+  } finally {
+    if (openedTransiently) {
+      const postTabs = findRawTextTabsForUri(document.uri);
+      for (const tab of postTabs) {
+        try {
+          await vscode.window.tabGroups.close(tab);
+        } catch (_err) {
+          // Ignore tab close error
+        }
+      }
+      try {
+        webviewPanel.reveal(webviewPanel.viewColumn, true);
+      } catch (_err) {
+        // Ignore
+      }
+    }
+  }
 }
 
 /**
@@ -477,8 +587,6 @@ async function syncSelectionToHostEditor(document, webviewPanel, msg, forceOpenC
  */
 function wireWebviewToDocument(webviewPanel, document, context, isSidePreview) {
   let isApplyingEditFromWebview = false;
-  const initConfig = vscode.workspace.getConfiguration('antiMarkdown');
-  let aiCompanionLinked = isSidePreview ? true : initConfig.get('autoLinkAiSelection', true);
 
   const sendUpdate = () => {
     if (!webviewPanel.visible) {
@@ -526,10 +634,6 @@ function wireWebviewToDocument(webviewPanel, document, context, isSidePreview) {
     switch (msg.type) {
       case 'ready': {
         sendUpdate();
-        webviewPanel.webview.postMessage({
-          type: 'aiCompanionState',
-          enabled: aiCompanionLinked
-        });
         break;
       }
 
@@ -537,18 +641,20 @@ function wireWebviewToDocument(webviewPanel, document, context, isSidePreview) {
         if (typeof msg.text !== 'string') {
           return;
         }
-        if (msg.text === document.getText()) {
-          return;
-        }
         isApplyingEditFromWebview = true;
         try {
-          const fullRange = new vscode.Range(
-            document.positionAt(0),
-            document.positionAt(document.getText().length)
-          );
-          const edit = new vscode.WorkspaceEdit();
-          edit.replace(document.uri, fullRange, msg.text);
-          await vscode.workspace.applyEdit(edit);
+          if (msg.text !== document.getText()) {
+            const fullRange = new vscode.Range(
+              document.positionAt(0),
+              document.positionAt(document.getText().length)
+            );
+            const edit = new vscode.WorkspaceEdit();
+            edit.replace(document.uri, fullRange, msg.text);
+            await vscode.workspace.applyEdit(edit);
+          }
+          if (msg.autoSave && document.isDirty) {
+            await document.save();
+          }
         } finally {
           isApplyingEditFromWebview = false;
         }
@@ -567,6 +673,7 @@ function wireWebviewToDocument(webviewPanel, document, context, isSidePreview) {
             const edit = new vscode.WorkspaceEdit();
             edit.replace(document.uri, line.range, updated);
             await vscode.workspace.applyEdit(edit);
+            await document.save();
           }
         }
         break;
@@ -618,83 +725,23 @@ function wireWebviewToDocument(webviewPanel, document, context, isSidePreview) {
         break;
       }
 
-      case 'selectionChanged': {
-        await syncSelectionToHostEditor(document, webviewPanel, msg, aiCompanionLinked);
-        break;
-      }
-
-      case 'toggleAiCompanion': {
-        aiCompanionLinked = !aiCompanionLinked;
-        if (aiCompanionLinked) {
-          await syncSelectionToHostEditor(
-            document,
-            webviewPanel,
-            { startLineNumber: msg.startLineNumber || 1, endLineNumber: msg.endLineNumber || 1, selectedText: msg.selectedText || '' },
-            true
-          );
-          vscode.window.showInformationMessage(
-            '已开启 AI 选区实时联动：在预览中框选文字将自动同步至右侧源码编辑器，VS Code Copilot 与 Claude Code 可直接识别文件与行号。'
-          );
-        } else {
-          vscode.window.showInformationMessage('已关闭自动分栏联动（仍可通过 Ctrl+L 或浮动按钮发送选区）。');
+      case 'updateAiPlatforms': {
+        if (Array.isArray(msg.platforms)) {
+          const allowed = ['vscode', 'antigravity', 'claude', 'codex'];
+          const cleaned = msg.platforms.filter((p) => allowed.includes(p));
+          const antiConfig = vscode.workspace.getConfiguration('antiMarkdown');
+          try {
+            await antiConfig.update('enabledAiPlatforms', cleaned, vscode.ConfigurationTarget.Global);
+          } catch (_err) {
+            // Ignore config update error
+          }
         }
-        webviewPanel.webview.postMessage({
-          type: 'aiCompanionState',
-          enabled: aiCompanionLinked
-        });
         break;
       }
 
+      case 'sendSelectionToPlatform':
       case 'addSelectionToChat': {
-        const { startLineNumber, endLineNumber } = await syncSelectionToHostEditor(
-          document,
-          webviewPanel,
-          msg,
-          true
-        );
-        aiCompanionLinked = true;
-        webviewPanel.webview.postMessage({
-          type: 'aiCompanionState',
-          enabled: true
-        });
-
-        const fileUriStr = normalizeMarkdownUri(document.uri).toString();
-        const availableCommands = await vscode.commands.getCommands(true);
-
-        // 1. Antigravity IDE native context injection
-        if (availableCommands.includes('antigravity.addContext')) {
-          try {
-            await vscode.commands.executeCommand('antigravity.addContext', {
-              type: 'file',
-              uri: fileUriStr,
-              range: {
-                startLineNumber,
-                endLineNumber
-              }
-            });
-          } catch (_err) {
-            // Ignore if view not active
-          }
-        }
-
-        // 2. Claude Code (@-mention selection injection)
-        if (availableCommands.includes('claude-vscode.insertAtMention')) {
-          try {
-            await vscode.commands.executeCommand('claude-vscode.insertAtMention');
-          } catch (_err) {
-            // Ignore if Claude Code panel not initialized
-          }
-        }
-
-        // 3. VS Code Built-in Copilot Chat selection attachment
-        if (availableCommands.includes('workbench.action.chat.attachSelection')) {
-          try {
-            await vscode.commands.executeCommand('workbench.action.chat.attachSelection');
-          } catch (_err) {
-            // Ignore
-          }
-        }
-
+        await sendSelectionToSinglePlatform(document, webviewPanel, msg);
         break;
       }
 
