@@ -1,0 +1,204 @@
+{
+  "name": "antigravity-markdown-viewer",
+  "displayName": "Antigravity Markdown Viewer",
+  "description": "Preview and edit any project Markdown (.md) file with Antigravity IDE's built-in Artifact Viewer (native bridge + standalone Custom Editor with Mermaid, Alerts, Carousels, KaTeX, file:// pills, and Review comments).",
+  "version": "1.0.0",
+  "publisher": "mazhao",
+  "license": "MIT",
+  "icon": "media/icon.png",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Visualization",
+    "Programming Languages",
+    "Other"
+  ],
+  "keywords": [
+    "antigravity",
+    "markdown",
+    "artifact",
+    "mermaid",
+    "preview",
+    "katex",
+    "carousel"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onLanguage:markdown",
+    "onCustomEditor:antiMarkdown.artifactEditor",
+    "onCommand:antiMarkdown.openNativeArtifact",
+    "onCommand:antiMarkdown.openNativeArtifactToSide",
+    "onCommand:antiMarkdown.openStandaloneViewer",
+    "onCommand:antiMarkdown.openPreviewToSide",
+    "onCommand:antiMarkdown.switchEditor",
+    "onCommand:antiMarkdown.toggleDefaultAssociation"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "customEditors": [
+      {
+        "viewType": "antiMarkdown.artifactEditor",
+        "displayName": "Antigravity Artifact Viewer (Pro)",
+        "priority": "default",
+        "selector": [
+          {
+            "filenamePattern": "**/*.md"
+          },
+          {
+            "filenamePattern": "**/*.markdown"
+          },
+          {
+            "filenamePattern": "*.md"
+          },
+          {
+            "filenamePattern": "*.markdown"
+          }
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "antiMarkdown.openNativeArtifact",
+        "title": "使用 Antigravity 原生内置编辑器打开 (Open in Native Artifact Viewer)",
+        "category": "Antigravity Markdown",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "antiMarkdown.openNativeArtifactToSide",
+        "title": "侧边栏打开 Antigravity 原生内置预览 (Open Native Artifact Viewer to the Side)",
+        "category": "Antigravity Markdown",
+        "icon": "$(open-preview)"
+      },
+      {
+        "command": "antiMarkdown.openStandaloneViewer",
+        "title": "使用 Antigravity 增强型编辑器打开 (Open in Antigravity Artifact Viewer Pro)",
+        "category": "Antigravity Markdown",
+        "icon": "$(book)"
+      },
+      {
+        "command": "antiMarkdown.openPreviewToSide",
+        "title": "侧边栏打开 Antigravity 实时同步预览 (Open Live Artifact Preview to the Side)",
+        "category": "Antigravity Markdown",
+        "icon": "$(split-horizontal)"
+      },
+      {
+        "command": "antiMarkdown.switchEditor",
+        "title": "切换 Markdown 源码 / Antigravity 预览 (Switch Source / Artifact Viewer)",
+        "category": "Antigravity Markdown",
+        "icon": "$(arrow-swap)"
+      },
+      {
+        "command": "antiMarkdown.toggleDefaultAssociation",
+        "title": "配置默认 Markdown 编辑器模式 (Configure Default Markdown Editor)",
+        "category": "Antigravity Markdown",
+        "icon": "$(settings-gear)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "antiMarkdown.openNativeArtifactToSide",
+          "when": "editorLangId == markdown || resourceExtname == '.md' || resourceExtname == '.markdown' || activeCustomEditorId == 'antiMarkdown.artifactEditor' || activeCustomEditorId == 'antigravity.artifactEditor'",
+          "group": "navigation@-1"
+        },
+        {
+          "command": "antiMarkdown.openPreviewToSide",
+          "when": "editorLangId == markdown || resourceExtname == '.md' || resourceExtname == '.markdown' || activeCustomEditorId == 'antiMarkdown.artifactEditor' || activeCustomEditorId == 'antigravity.artifactEditor'",
+          "group": "navigation@-2"
+        },
+        {
+          "command": "antiMarkdown.switchEditor",
+          "when": "editorLangId == markdown || resourceExtname == '.md' || resourceExtname == '.markdown' || activeCustomEditorId == 'antiMarkdown.artifactEditor' || activeCustomEditorId == 'antigravity.artifactEditor'",
+          "group": "navigation@-3"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "antiMarkdown.openNativeArtifact",
+          "when": "resourceExtname == '.md' || resourceExtname == '.markdown'",
+          "group": "navigation@1"
+        },
+        {
+          "command": "antiMarkdown.openNativeArtifactToSide",
+          "when": "resourceExtname == '.md' || resourceExtname == '.markdown'",
+          "group": "navigation@2"
+        },
+        {
+          "command": "antiMarkdown.openStandaloneViewer",
+          "when": "resourceExtname == '.md' || resourceExtname == '.markdown'",
+          "group": "navigation@3"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "antiMarkdown.openNativeArtifactToSide",
+          "when": "editorLangId == markdown",
+          "group": "navigation@1"
+        },
+        {
+          "command": "antiMarkdown.openPreviewToSide",
+          "when": "editorLangId == markdown",
+          "group": "navigation@2"
+        },
+        {
+          "command": "antiMarkdown.switchEditor",
+          "when": "editorLangId == markdown",
+          "group": "navigation@3"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "antiMarkdown.switchEditor",
+        "key": "ctrl+alt+m",
+        "mac": "cmd+alt+m",
+        "when": "editorLangId == markdown || resourceExtname == '.md' || resourceExtname == '.markdown'"
+      },
+      {
+        "command": "antiMarkdown.openNativeArtifactToSide",
+        "key": "ctrl+alt+v",
+        "mac": "cmd+alt+v",
+        "when": "editorLangId == markdown || resourceExtname == '.md' || resourceExtname == '.markdown'"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "Antigravity Markdown Viewer",
+      "properties": {
+        "antiMarkdown.engineMode": {
+          "type": "string",
+          "enum": [
+            "standalone",
+            "native"
+          ],
+          "enumDescriptions": [
+            "Use the built-in Antigravity Artifact Viewer Pro (supports real-time unsaved buffer sync, split editing, TOC outline, Mermaid, Alerts, Carousels, KaTeX, file:// pills, and one-click switch to native viewer).",
+            "Automatically delegate *.md custom editor tabs to Antigravity IDE's native internal antigravity.artifactEditor."
+          ],
+          "default": "standalone",
+          "description": "Select which engine powers the Antigravity Artifact Viewer custom editor."
+        },
+        "antiMarkdown.defaultViewMode": {
+          "type": "string",
+          "enum": [
+            "preview",
+            "split",
+            "source"
+          ],
+          "default": "preview",
+          "description": "Default view mode when opening a Markdown file in Antigravity Artifact Viewer Pro."
+        },
+        "antiMarkdown.showOutline": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the collapsible Table of Contents (TOC) outline sidebar by default."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "check": "node --check out/extension.js && node --check media/viewer.js",
+    "test": "node test/verify.js"
+  }
+}
