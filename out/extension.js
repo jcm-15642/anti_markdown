@@ -523,24 +523,66 @@ function wireWebviewToDocument(webviewPanel, document, context, isSidePreview) {
         break;
       }
 
+      case 'addSelectionToChat': {
+        const startLineNumber = Math.max(1, Number(msg.startLineNumber) || 1);
+        const endLineNumber = Math.max(startLineNumber, Number(msg.endLineNumber) || startLineNumber);
+        const fileUriStr = normalizeMarkdownUri(document.uri).toString();
+        try {
+          await vscode.commands.executeCommand('antigravity.addContext', {
+            type: 'file',
+            uri: fileUriStr,
+            range: {
+              startLineNumber,
+              endLineNumber
+            }
+          });
+        } catch (_err) {
+          const fallbackRef = `${fileUriStr}#L${startLineNumber}-L${endLineNumber}`;
+          await vscode.env.clipboard.writeText(fallbackRef);
+          vscode.window.showInformationMessage(`已复制文件行号引用: ${fallbackRef}`);
+        }
+        break;
+      }
+
       case 'submitReviewComment': {
         const comment = typeof msg.comment === 'string' ? msg.comment.trim() : '';
         const selectedText = typeof msg.selectedText === 'string' ? msg.selectedText.trim() : '';
         const sectionHeading = typeof msg.heading === 'string' ? msg.heading.trim() : '';
+        const startLineNumber = Math.max(1, Number(msg.startLineNumber) || 1);
+        const endLineNumber = Math.max(startLineNumber, Number(msg.endLineNumber) || startLineNumber);
         if (!comment) {
           return;
         }
-        const filePath = document.uri.fsPath || document.uri.path;
+        const cleanUri = normalizeMarkdownUri(document.uri);
+        const filePath = cleanUri.fsPath || cleanUri.path;
         const formattedReview = [
-          `[Artifact Review: ${path.basename(filePath)}${sectionHeading ? ' > ' + sectionHeading : ''}](file://${filePath})`,
+          `[Artifact Review: ${path.basename(filePath)}${sectionHeading ? ' > ' + sectionHeading : ''}](file://${filePath}#L${startLineNumber}-L${endLineNumber})`,
           selectedText ? `> ${selectedText.split('\n').join('\n> ')}` : '',
           `Comment: ${comment}`
         ].filter(Boolean).join('\n');
 
         await vscode.env.clipboard.writeText(formattedReview);
-        vscode.window.showInformationMessage(
-          '已生成 Artifact 批注并复制到剪贴板（可直接粘贴至 Antigravity 对话框）。'
-        );
+        try {
+          await vscode.commands.executeCommand(
+            'antigravity.addContext',
+            {
+              type: 'file',
+              uri: cleanUri.toString(),
+              range: {
+                startLineNumber,
+                endLineNumber
+              }
+            },
+            comment
+          );
+          vscode.window.showInformationMessage(
+            '已将选中文件行号与批注直接添加到 Antigravity 侧边聊天框！'
+          );
+        } catch (_err) {
+          vscode.window.showInformationMessage(
+            '已生成 Artifact 批注并复制到剪贴板（可直接粘贴至 Antigravity 对话框）。'
+          );
+        }
         break;
       }
 

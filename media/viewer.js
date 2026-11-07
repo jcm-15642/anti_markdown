@@ -2039,12 +2039,58 @@
       reviewModal.classList.add('hidden');
     });
 
+    /**
+     * Resolve 1-based [startLineNumber, endLineNumber] in state.text for a snippet or textarea selection.
+     * @param {string} snippet
+     * @returns {{ startLineNumber: number, endLineNumber: number }}
+     */
+    function findLineRangeForSnippet(snippet) {
+      if (document.activeElement === sourceTextarea) {
+        const startOffset = sourceTextarea.selectionStart || 0;
+        const endOffset = Math.max(startOffset, sourceTextarea.selectionEnd || startOffset);
+        const startLineNumber = state.text.slice(0, startOffset).split('\n').length;
+        const endLineNumber = state.text.slice(0, endOffset).split('\n').length;
+        return { startLineNumber, endLineNumber };
+      }
+
+      const clean = String(snippet || '').trim();
+      if (!clean) {
+        return { startLineNumber: 1, endLineNumber: 1 };
+      }
+
+      const idx = state.text.indexOf(clean);
+      if (idx !== -1) {
+        const startLineNumber = state.text.slice(0, idx).split('\n').length;
+        const endLineNumber = startLineNumber + clean.split('\n').length - 1;
+        return { startLineNumber, endLineNumber };
+      }
+
+      const firstLine = clean.split('\n')[0].trim();
+      if (firstLine) {
+        const lines = state.text.split('\n');
+        for (let i = 0; i < lines.length; i++) {
+          if (lines[i].includes(firstLine)) {
+            const span = Math.max(1, clean.split('\n').length);
+            return {
+              startLineNumber: i + 1,
+              endLineNumber: Math.min(lines.length, i + span)
+            };
+          }
+        }
+      }
+
+      return { startLineNumber: 1, endLineNumber: 1 };
+    }
+
     reviewSubmitBtn.addEventListener('click', () => {
       if (vscode && reviewInput.value.trim()) {
+        const range = findLineRangeForSnippet(state.reviewQuote || state.reviewHeading);
         vscode.postMessage({
           type: 'submitReviewComment',
           heading: state.reviewHeading,
           selectedText: state.reviewQuote,
+          startLineNumber: range.startLineNumber,
+          endLineNumber: range.endLineNumber,
           comment: reviewInput.value.trim()
         });
         reviewInput.value = '';
@@ -2067,12 +2113,24 @@
       }, 160);
     });
 
-    // Support Ctrl+S / Cmd+S to save directly from the custom editor
+    // Support Ctrl+S / Cmd+S to save and Ctrl+L / Cmd+L to send selection to Antigravity Chat
     window.addEventListener('keydown', (ev) => {
       if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 's') {
         ev.preventDefault();
         if (vscode) {
           vscode.postMessage({ type: 'save' });
+        }
+      } else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'l') {
+        ev.preventDefault();
+        if (vscode) {
+          const sel = window.getSelection ? String(window.getSelection()).trim() : '';
+          const range = findLineRangeForSnippet(sel);
+          vscode.postMessage({
+            type: 'addSelectionToChat',
+            startLineNumber: range.startLineNumber,
+            endLineNumber: range.endLineNumber,
+            selectedText: sel
+          });
         }
       }
     });
