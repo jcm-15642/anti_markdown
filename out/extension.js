@@ -380,6 +380,95 @@ function createDocumentPayload(document, webview, isSidePreview) {
 }
 
 /**
+ * Compute a valid 0-based vscode.Selection for 1-based [startLineNumber, endLineNumber].
+ * @param {vscode.TextDocument} document
+ * @param {number} startLineNumber
+ * @param {number} endLineNumber
+ * @param {string} [selectedText]
+ * @returns {vscode.Selection}
+ */
+function buildDocumentSelection(document, startLineNumber, endLineNumber, selectedText) {
+  const maxLine = Math.max(0, document.lineCount - 1);
+  let zeroStart = Math.min(maxLine, Math.max(0, (Number(startLineNumber) || 1) - 1));
+  let zeroEnd = Math.min(maxLine, Math.max(zeroStart, (Number(endLineNumber) || startLineNumber || 1) - 1));
+  let startChar = 0;
+  let endChar = document.lineAt(zeroEnd).text.length;
+
+  if (selectedText && typeof selectedText === 'string') {
+    const clean = selectedText.trim();
+    if (clean) {
+      const fullText = document.getText();
+      const idx = fullText.indexOf(clean);
+      if (idx !== -1) {
+        const startPos = document.positionAt(idx);
+        const endPos = document.positionAt(idx + clean.length);
+        return new vscode.Selection(startPos, endPos);
+      }
+      const lineText = document.lineAt(zeroStart).text;
+      const firstLineClean = clean.split('\n')[0];
+      const colIdx = lineText.indexOf(firstLineClean);
+      if (colIdx !== -1) {
+        startChar = colIdx;
+        if (zeroStart === zeroEnd) {
+          endChar = Math.min(lineText.length, colIdx + firstLineClean.length);
+        }
+      }
+    }
+  }
+
+  return new vscode.Selection(zeroStart, startChar, zeroEnd, endChar);
+}
+
+/**
+ * Synchronize selection from the Custom Editor Webview to a real vscode.TextEditor
+ * so that VS Code Copilot Chat (ChatImplicitContext), Claude Code (onDidChangeTextEditorSelection
+ * & visibleTextEditors), and Antigravity IDE (EditorStateWatcher) all recognize the file and line range.
+ * @param {vscode.TextDocument} document
+ * @param {vscode.WebviewPanel} webviewPanel
+ * @param {object} msg
+ * @param {boolean} forceOpenCompanion
+ */
+async function syncSelectionToHostEditor(document, webviewPanel, msg, forceOpenCompanion) {
+  const startLineNumber = Math.max(1, Number(msg.startLineNumber) || 1);
+  const endLineNumber = Math.max(startLineNumber, Number(msg.endLineNumber) || startLineNumber);
+  const selection = buildDocumentSelection(document, startLineNumber, endLineNumber, msg.selectedText);
+
+  let targetEditor = vscode.window.visibleTextEditors.find(
+    (ed) => ed.document && ed.document.uri.toString() === document.uri.toString()
+  );
+
+  if (!targetEditor && forceOpenCompanion) {
+    const targetColumn =
+      webviewPanel.viewColumn === vscode.ViewColumn.One
+        ? vscode.ViewColumn.Beside
+        : vscode.ViewColumn.One;
+    targetEditor = await vscode.window.showTextDocument(document, {
+      viewColumn: targetColumn,
+      preview: true,
+      preserveFocus: false
+    });
+  }
+
+  if (targetEditor) {
+    targetEditor.selection = selection;
+    targetEditor.selections = [selection];
+    targetEditor.revealRange(
+      new vscode.Range(selection.start, selection.end),
+      vscode.TextEditorRevealType.InCenterIfOutsideViewport
+    );
+    // Briefly activate the TextEditor so VS Code Copilot Chat & Claude Code
+    // pass their `event.textEditor === vscode.window.activeTextEditor` check
+    await vscode.window.showTextDocument(document, {
+      viewColumn: targetEditor.viewColumn,
+      preview: true,
+      preserveFocus: false
+    });
+  }
+
+  return { targetEditor, selection, startLineNumber, endLineNumber };
+}
+
+/**
  * Attach message handlers between a WebviewPanel and a TextDocument.
  * @param {vscode.WebviewPanel} webviewPanel
  * @param {vscode.TextDocument} document
@@ -388,6 +477,8 @@ function createDocumentPayload(document, webview, isSidePreview) {
  */
 function wireWebviewToDocument(webviewPanel, document, context, isSidePreview) {
   let isApplyingEditFromWebview = false;
+  const initConfig = vscode.workspace.getConfiguration('antiMarkdown');
+  let aiCompanionLinked = isSidePreview ? true : initConfig.get('autoLinkAiSelection', true);
 
   const sendUpdate = () => {
     if (!webviewPanel.visible) {
@@ -435,6 +526,10 @@ function wireWebviewToDocument(webviewPanel, document, context, isSidePreview) {
     switch (msg.type) {
       case 'ready': {
         sendUpdate();
+        webviewPanel.webview.postMessage({
+          type: 'aiCompanionState',
+          enabled: aiCompanionLinked
+        });
         break;
       }
 
@@ -523,24 +618,83 @@ function wireWebviewToDocument(webviewPanel, document, context, isSidePreview) {
         break;
       }
 
-      case 'addSelectionToChat': {
-        const startLineNumber = Math.max(1, Number(msg.startLineNumber) || 1);
-        const endLineNumber = Math.max(startLineNumber, Number(msg.endLineNumber) || startLineNumber);
-        const fileUriStr = normalizeMarkdownUri(document.uri).toString();
-        try {
-          await vscode.commands.executeCommand('antigravity.addContext', {
-            type: 'file',
-            uri: fileUriStr,
-            range: {
-              startLineNumber,
-              endLineNumber
-            }
-          });
-        } catch (_err) {
-          const fallbackRef = `${fileUriStr}#L${startLineNumber}-L${endLineNumber}`;
-          await vscode.env.clipboard.writeText(fallbackRef);
-          vscode.window.showInformationMessage(`已复制文件行号引用: ${fallbackRef}`);
+      case 'selectionChanged': {
+        await syncSelectionToHostEditor(document, webviewPanel, msg, aiCompanionLinked);
+        break;
+      }
+
+      case 'toggleAiCompanion': {
+        aiCompanionLinked = !aiCompanionLinked;
+        if (aiCompanionLinked) {
+          await syncSelectionToHostEditor(
+            document,
+            webviewPanel,
+            { startLineNumber: msg.startLineNumber || 1, endLineNumber: msg.endLineNumber || 1, selectedText: msg.selectedText || '' },
+            true
+          );
+          vscode.window.showInformationMessage(
+            '已开启 AI 选区实时联动：在预览中框选文字将自动同步至右侧源码编辑器，VS Code Copilot 与 Claude Code 可直接识别文件与行号。'
+          );
+        } else {
+          vscode.window.showInformationMessage('已关闭自动分栏联动（仍可通过 Ctrl+L 或浮动按钮发送选区）。');
         }
+        webviewPanel.webview.postMessage({
+          type: 'aiCompanionState',
+          enabled: aiCompanionLinked
+        });
+        break;
+      }
+
+      case 'addSelectionToChat': {
+        const { startLineNumber, endLineNumber } = await syncSelectionToHostEditor(
+          document,
+          webviewPanel,
+          msg,
+          true
+        );
+        aiCompanionLinked = true;
+        webviewPanel.webview.postMessage({
+          type: 'aiCompanionState',
+          enabled: true
+        });
+
+        const fileUriStr = normalizeMarkdownUri(document.uri).toString();
+        const availableCommands = await vscode.commands.getCommands(true);
+
+        // 1. Antigravity IDE native context injection
+        if (availableCommands.includes('antigravity.addContext')) {
+          try {
+            await vscode.commands.executeCommand('antigravity.addContext', {
+              type: 'file',
+              uri: fileUriStr,
+              range: {
+                startLineNumber,
+                endLineNumber
+              }
+            });
+          } catch (_err) {
+            // Ignore if view not active
+          }
+        }
+
+        // 2. Claude Code (@-mention selection injection)
+        if (availableCommands.includes('claude-vscode.insertAtMention')) {
+          try {
+            await vscode.commands.executeCommand('claude-vscode.insertAtMention');
+          } catch (_err) {
+            // Ignore if Claude Code panel not initialized
+          }
+        }
+
+        // 3. VS Code Built-in Copilot Chat selection attachment
+        if (availableCommands.includes('workbench.action.chat.attachSelection')) {
+          try {
+            await vscode.commands.executeCommand('workbench.action.chat.attachSelection');
+          } catch (_err) {
+            // Ignore
+          }
+        }
+
         break;
       }
 

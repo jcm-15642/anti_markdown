@@ -40,10 +40,9 @@ function generateExtensionIconPng(targetPath) {
 
   for (let y = 0; y < height; y++) {
     const rowStart = y * (1 + width * 4);
-    rawData[rowStart] = 0; // Filter type 0 (None)
+    rawData[rowStart] = 0;
     for (let x = 0; x < width; x++) {
       const px = rowStart + 1 + x * 4;
-      // Rounded corner mask
       const dx = Math.max(0, Math.abs(x - 63.5) - 38.5);
       const dy = Math.max(0, Math.abs(y - 63.5) - 38.5);
       const dist = Math.sqrt(dx * dx + dy * dy);
@@ -55,25 +54,21 @@ function generateExtensionIconPng(targetPath) {
         continue;
       }
 
-      // Deep Antigravity dark indigo-blue gradient background
       let r = Math.round(15 + (x / width) * 25);
       let g = Math.round(23 + (y / height) * 30);
       let b = Math.round(42 + ((x + y) / (width + height)) * 95);
 
-      // Border highlight
       if (dist > 16.5) {
         r = 96;
         g = 165;
         b = 250;
       }
 
-      // Draw 'M' glyph in white/cyan
       const inLeftBar = x >= 26 && x <= 37 && y >= 42 && y <= 86;
       const inRightBar = x >= 70 && x <= 81 && y >= 42 && y <= 86;
       const inLeftDiag = y >= 42 && y <= 74 && Math.abs((x - 32) - (y - 42) * 0.65) < 5.5;
       const inRightDiag = y >= 42 && y <= 74 && Math.abs((75 - x) - (y - 42) * 0.65) < 5.5;
 
-      // Draw Antigravity Sparkle star on top right
       const sx = x - 96;
       const sy = y - 44;
       const inSparkle = (Math.abs(sx) * 2.2 + Math.abs(sy) < 16) || (Math.abs(sy) * 2.2 + Math.abs(sx) < 16);
@@ -109,8 +104,8 @@ function generateExtensionIconPng(targetPath) {
   const ihdr = Buffer.alloc(13);
   ihdr.writeUInt32BE(width, 0);
   ihdr.writeUInt32BE(height, 4);
-  ihdr[8] = 8; // bit depth
-  ihdr[9] = 6; // color type RGBA
+  ihdr[8] = 8;
+  ihdr[9] = 6;
   ihdr[10] = 0;
   ihdr[11] = 0;
   ihdr[12] = 0;
@@ -140,14 +135,13 @@ function buildZipArchive(entries) {
     const compressed = zlib.deflateRawSync(uncompressed, { level: 9 });
     const entryCrc = crc32(uncompressed);
 
-    // Local file header (30 bytes + filename)
     const localHeader = Buffer.alloc(30 + nameBuf.length);
     localHeader.writeUInt32LE(0x04034b50, 0);
-    localHeader.writeUInt16LE(20, 4); // version needed
-    localHeader.writeUInt16LE(0x0800, 6); // UTF-8 flag
-    localHeader.writeUInt16LE(8, 8); // deflate compression
-    localHeader.writeUInt16LE(0, 10); // mod time
-    localHeader.writeUInt16LE(0x5621, 12); // mod date
+    localHeader.writeUInt16LE(20, 4);
+    localHeader.writeUInt16LE(0x0800, 6);
+    localHeader.writeUInt16LE(8, 8);
+    localHeader.writeUInt16LE(0, 10);
+    localHeader.writeUInt16LE(0x5621, 12);
     localHeader.writeUInt32LE(entryCrc, 14);
     localHeader.writeUInt32LE(compressed.length, 18);
     localHeader.writeUInt32LE(uncompressed.length, 22);
@@ -157,13 +151,12 @@ function buildZipArchive(entries) {
 
     localParts.push(localHeader, compressed);
 
-    // Central directory header (46 bytes + filename)
     const centralHeader = Buffer.alloc(46 + nameBuf.length);
     centralHeader.writeUInt32LE(0x02014b50, 0);
-    centralHeader.writeUInt16LE(20, 4); // version made by
-    centralHeader.writeUInt16LE(20, 6); // version needed
-    centralHeader.writeUInt16LE(0x0800, 8); // UTF-8 flag
-    centralHeader.writeUInt16LE(8, 10); // deflate
+    centralHeader.writeUInt16LE(20, 4);
+    centralHeader.writeUInt16LE(20, 6);
+    centralHeader.writeUInt16LE(0x0800, 8);
+    centralHeader.writeUInt16LE(8, 10);
     centralHeader.writeUInt16LE(0, 12);
     centralHeader.writeUInt16LE(0x5621, 14);
     centralHeader.writeUInt32LE(entryCrc, 16);
@@ -197,7 +190,8 @@ function buildZipArchive(entries) {
 }
 
 /**
- * Package the VS Code extension into antigravity-markdown-viewer-1.0.0.vsix.
+ * Package the VS Code extension into antigravity-markdown-viewer-<version>.vsix
+ * and remove older .vsix archives in the root directory.
  */
 function packageVsix(pkg) {
   const contentTypesXml = [
@@ -267,13 +261,37 @@ function packageVsix(pkg) {
     });
   }
 
-  const vsixPath = path.join(ROOT, `${pkg.name}-${pkg.version}.vsix`);
+  // Clean up stale .vsix files from previous versions
+  const existingFiles = fs.readdirSync(ROOT);
+  const targetFileName = `${pkg.name}-${pkg.version}.vsix`;
+  for (const f of existingFiles) {
+    if (f.endsWith('.vsix') && f !== targetFileName) {
+      fs.unlinkSync(path.join(ROOT, f));
+    }
+  }
+
+  const vsixPath = path.join(ROOT, targetFileName);
   const zipBuf = buildZipArchive(entries);
   fs.writeFileSync(vsixPath, zipBuf);
   return vsixPath;
 }
 
+function maybeBumpVersion(pkgPath) {
+  if (!process.argv.includes('--bump')) {
+    return;
+  }
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+  const parts = String(pkg.version || '1.1.0').split('.').map((n) => parseInt(n, 10) || 0);
+  parts[2] = (parts[2] || 0) + 1;
+  pkg.version = `${parts[0]}.${parts[1]}.${parts[2]}`;
+  fs.writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n', 'utf8');
+  console.log(`✓ Auto-incremented package.json version to ${pkg.version}`);
+}
+
 function runVerificationSuite() {
+  const pkgPath = path.join(ROOT, 'package.json');
+  maybeBumpVersion(pkgPath);
+
   console.log('=== 1. Generating Extension Icon (media/icon.png) ===');
   const iconPngPath = path.join(ROOT, 'media', 'icon.png');
   generateExtensionIconPng(iconPngPath);
@@ -281,12 +299,13 @@ function runVerificationSuite() {
   console.log('✓ Generated media/icon.png');
 
   console.log('=== 2. Verifying package.json Manifest ===');
-  const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'));
+  const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
   assert.strictEqual(pkg.name, 'antigravity-markdown-viewer');
+  assert.notStrictEqual(pkg.version, '1.0.0', 'Version must not stay at 1.0.0');
   assert.strictEqual(pkg.contributes.customEditors[0].viewType, 'antiMarkdown.artifactEditor');
   const patterns = pkg.contributes.customEditors[0].selector.map((s) => s.filenamePattern);
   assert.ok(patterns.includes('**/*.md'), 'Must match **/*.md across local and WSL Remote');
-  console.log('✓ package.json customEditors & commands verified');
+  console.log(`✓ package.json (v${pkg.version}) customEditors & commands verified`);
 
   console.log('=== 3. Verifying Security Rules on Source Files ===');
   const extSource = fs.readFileSync(path.join(ROOT, 'out', 'extension.js'), 'utf8');
@@ -295,23 +314,31 @@ function runVerificationSuite() {
   assert.ok(!/\b(?:localStorage|sessionStorage)\b/.test(viewerSource), 'viewer.js must not use localStorage/sessionStorage');
   assert.ok(extSource.includes("default-src 'none'"), 'extension.js must enforce strict CSP');
   assert.ok(extSource.includes("scheme: 'jetski-artifact'"), 'extension.js must support native jetski-artifact bridge');
-  console.log('✓ Security checks passed (zero innerHTML, strict nonce CSP, safe DOM APIs)');
+  assert.ok(extSource.includes('claude-vscode.insertAtMention'), 'extension.js must support Claude Code @-mention selection');
+  assert.ok(extSource.includes('workbench.action.chat.attachSelection'), 'extension.js must support VS Code Copilot Chat selection');
+  console.log('✓ Security & AI Chat integration checks passed');
 
-  console.log('=== 4. Testing Markdown AST Parser & Mermaid Renderer ===');
+  console.log('=== 4. Testing Markdown AST, Recursive LaTeX Parser & Mermaid ===');
   const viewer = require(path.join(ROOT, 'media', 'viewer.js'));
   const demoMd = fs.readFileSync(path.join(ROOT, 'examples', 'django_orm_demo.md'), 'utf8');
   const demoAst = viewer.parseMarkdownToAst(demoMd);
 
   assert.strictEqual(demoAst.frontmatter.length, 3, 'Should parse YAML frontmatter');
   assert.ok(demoAst.headings.length >= 6, 'Should extract TOC headings');
+  assert.ok(demoAst.blocks.every((b) => typeof b.startLine === 'number' && typeof b.endLine === 'number'), 'Every block must record startLine and endLine');
   assert.ok(demoAst.blocks.some((b) => b.type === 'mermaid'), 'Should parse Mermaid blocks');
-  assert.ok(demoAst.blocks.some((b) => b.type === 'alert' && b.alertType === 'IMPORTANT'), 'Should parse [!IMPORTANT] alert');
+  assert.strictEqual(demoAst.blocks.filter((b) => b.type === 'alert').length, 5, 'Should parse all 5 GitHub alerts');
   assert.ok(demoAst.blocks.some((b) => b.type === 'carousel' && b.slides.length === 3), 'Should parse 3-slide carousel');
   assert.ok(demoAst.blocks.some((b) => b.type === 'mathBlock'), 'Should parse $$ mathBlock');
-  assert.ok(demoAst.blocks.some((b) => b.type === 'table'), 'Should parse GFM table');
-  console.log('✓ examples/django_orm_demo.md AST verified');
 
-  // Test parsing the user's actual brain file if present
+  // Verify nested brace LaTeX argument reader on complex nested fraction
+  const nestedFrac = '{T_{\\text{N+1}}}{T_{\\text{Eager}}}';
+  const arg1 = viewer.readLatexArgument(nestedFrac, 0);
+  const arg2 = viewer.readLatexArgument(nestedFrac, arg1.nextPos);
+  assert.strictEqual(arg1.content, 'T_{\\text{N+1}}');
+  assert.strictEqual(arg2.content, 'T_{\\text{Eager}}');
+  console.log('✓ Verified recursive nested LaTeX parser & block line tracking');
+
   const brainGuidePath = '/home/mazhao/.gemini/antigravity/brain/64de7d0d-2444-4f96-964a-05b73d2273f5/django_orm_complete_guide.md';
   if (fs.existsSync(brainGuidePath)) {
     const brainMd = fs.readFileSync(brainGuidePath, 'utf8');

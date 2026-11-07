@@ -4,11 +4,11 @@
   const SVG_NS = 'http://www.w3.org/2000/svg';
 
   /**
-   * Helper to create an HTML element with class, text, and attributes using safe DOM APIs.
+   * Create an HTML element with class, textContent, and attributes using safe DOM APIs.
    * @param {string} tag
    * @param {string} [className]
    * @param {string} [text]
-   * @param {Record<string, string>} [attrs]
+   * @param {Record<string, string | number>} [attrs]
    * @returns {HTMLElement}
    */
   function el(tag, className, text, attrs) {
@@ -32,7 +32,7 @@
   }
 
   /**
-   * Helper to create an SVG element safely via createElementNS.
+   * Create an SVG element safely via createElementNS.
    * @param {string} tag
    * @param {Record<string, string | number>} [attrs]
    * @param {string} [text]
@@ -71,10 +71,10 @@
   }
 
   /**
-   * Parse Markdown text (including 4-backtick fences, YAML frontmatter, alerts, tables,
-   * carousels, display math, and lists) into a structured AST.
+   * Parse Markdown text into a structured AST where every block records its exact
+   * 0-based [startLine, endLine] and rawMarkdown slice for in-place live editing and selection mapping.
    * @param {string} rawMarkdown
-   * @returns {{ frontmatter: Array<{key: string, value: string}>, blocks: Array<any>, headings: Array<any> }}
+   * @returns {{ frontmatter: Array<{key: string, value: string}>, blocks: Array<any>, headings: Array<any>, lines: string[] }}
    */
   function parseMarkdownToAst(rawMarkdown) {
     const normalized = String(rawMarkdown || '').replace(/\r\n/g, '\n');
@@ -108,17 +108,25 @@
       }
     }
 
+    function pushBlock(blockObj, startLine, endLine) {
+      const safeStart = Math.max(0, startLine);
+      const safeEnd = Math.max(safeStart, Math.min(lines.length - 1, endLine));
+      blockObj.startLine = safeStart;
+      blockObj.endLine = safeEnd;
+      blockObj.rawMarkdown = lines.slice(safeStart, safeEnd + 1).join('\n');
+      blocks.push(blockObj);
+    }
+
     while (i < lines.length) {
       const line = lines[i];
       const trimmed = line.trim();
 
-      // Skip blank lines
       if (!trimmed) {
         i++;
         continue;
       }
 
-      // 2. Fenced Code Block / Carousel / Mermaid (supports 3 or more backticks or tildes)
+      // 2. Fenced Code Block / Carousel / Mermaid (3+ backticks or tildes)
       const fenceMatch = line.match(/^(\s*)(`{3,}|~{3,})\s*([^\s`~]*)(.*)$/);
       if (fenceMatch) {
         const fenceChars = fenceMatch[2];
@@ -140,37 +148,30 @@
           i++;
         }
 
+        const endLine = i - 1;
         const codeContent = contentLines.join('\n');
         if (lang === 'carousel') {
           const slides = codeContent
             .split(/<!--\s*slide\s*-->/i)
             .map((s) => s.trim())
             .filter(Boolean);
-          blocks.push({
-            type: 'carousel',
-            slides,
-            startLine
-          });
+          pushBlock({ type: 'carousel', slides }, startLine, endLine);
         } else if (lang === 'mermaid') {
-          blocks.push({
-            type: 'mermaid',
-            code: codeContent,
-            startLine
-          });
+          pushBlock({ type: 'mermaid', code: codeContent }, startLine, endLine);
         } else if (lang === 'math' || lang === 'latex' || lang === 'katex') {
-          blocks.push({
-            type: 'mathBlock',
-            expression: codeContent,
-            startLine
-          });
+          pushBlock({ type: 'mathBlock', expression: codeContent }, startLine, endLine);
         } else {
-          blocks.push({
-            type: 'code',
-            lang: lang || 'text',
-            meta,
-            code: codeContent,
-            startLine
-          });
+          pushBlock(
+            {
+              type: 'code',
+              lang: lang || 'text',
+              meta,
+              code: codeContent,
+              codeStartLine: startLine + 1
+            },
+            startLine,
+            endLine
+          );
         }
         continue;
       }
@@ -180,13 +181,17 @@
         const isDollar = trimmed.startsWith('$$');
         const closeToken = isDollar ? '$$' : '\\]';
         const firstLineRest = trimmed.slice(2).trim();
+        const startLine = i;
 
         if (firstLineRest.endsWith(closeToken) && firstLineRest.length > closeToken.length) {
-          blocks.push({
-            type: 'mathBlock',
-            expression: firstLineRest.slice(0, -closeToken.length).trim(),
-            startLine: i
-          });
+          pushBlock(
+            {
+              type: 'mathBlock',
+              expression: firstLineRest.slice(0, -closeToken.length).trim()
+            },
+            startLine,
+            i
+          );
           i++;
           continue;
         }
@@ -195,7 +200,6 @@
         if (firstLineRest && firstLineRest !== closeToken) {
           exprLines.push(firstLineRest);
         }
-        const startLine = i;
         i++;
         while (i < lines.length) {
           const curTrim = lines[i].trim();
@@ -210,11 +214,14 @@
           exprLines.push(lines[i]);
           i++;
         }
-        blocks.push({
-          type: 'mathBlock',
-          expression: exprLines.join('\n').trim(),
-          startLine
-        });
+        pushBlock(
+          {
+            type: 'mathBlock',
+            expression: exprLines.join('\n').trim()
+          },
+          startLine,
+          i - 1
+        );
         continue;
       }
 
@@ -228,18 +235,17 @@
           type: 'heading',
           level,
           text: rawText,
-          id,
-          startLine: i
+          id
         };
+        pushBlock(headingObj, i, i);
         headings.push(headingObj);
-        blocks.push(headingObj);
         i++;
         continue;
       }
 
       // 5. Horizontal Rule
       if (/^\s*(?:[-*_]\s*){3,}$/.test(line)) {
-        blocks.push({ type: 'hr', startLine: i });
+        pushBlock({ type: 'hr' }, i, i);
         i++;
         continue;
       }
@@ -248,7 +254,13 @@
       if (/^\s*>/.test(line)) {
         const quoteLines = [];
         const startLine = i;
-        while (i < lines.length && (/^\s*>/.test(lines[i]) || (lines[i].trim() !== '' && quoteLines.length > 0 && !/^\s*(?:#|`{3,}|[-*+]\s|\d+\.\s|\|)/.test(lines[i])))) {
+        while (
+          i < lines.length &&
+          (/^\s*>/.test(lines[i]) ||
+            (lines[i].trim() !== '' &&
+              quoteLines.length > 0 &&
+              !/^\s*(?:#|`{3,}|[-*+]\s|\d+\.\s|\|)/.test(lines[i])))
+        ) {
           if (/^\s*>/.test(lines[i])) {
             quoteLines.push(lines[i].replace(/^\s*>\s?/, ''));
           } else {
@@ -257,6 +269,7 @@
           i++;
         }
 
+        const endLine = i - 1;
         const firstQuoteLine = (quoteLines[0] || '').trim();
         const alertMatch = firstQuoteLine.match(/^\[!(NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*(.*)$/i);
         if (alertMatch) {
@@ -269,19 +282,25 @@
           for (let q = 1; q < quoteLines.length; q++) {
             bodyLines.push(quoteLines[q]);
           }
-          blocks.push({
-            type: 'alert',
-            alertType,
-            title: alertType,
-            body: bodyLines.join('\n').trim(),
-            startLine
-          });
+          pushBlock(
+            {
+              type: 'alert',
+              alertType,
+              title: alertType,
+              body: bodyLines.join('\n').trim()
+            },
+            startLine,
+            endLine
+          );
         } else {
-          blocks.push({
-            type: 'blockquote',
-            body: quoteLines.join('\n').trim(),
-            startLine
-          });
+          pushBlock(
+            {
+              type: 'blockquote',
+              body: quoteLines.join('\n').trim()
+            },
+            startLine,
+            endLine
+          );
         }
         continue;
       }
@@ -335,17 +354,20 @@
           i++;
         }
 
-        blocks.push({
-          type: 'table',
-          headers,
-          alignments,
-          rows,
-          startLine
-        });
+        pushBlock(
+          {
+            type: 'table',
+            headers,
+            alignments,
+            rows
+          },
+          startLine,
+          i - 1
+        );
         continue;
       }
 
-      // 8. Ordered or Unordered List (with nested items & Task List checkboxes)
+      // 8. Ordered or Unordered List
       const listMatch = line.match(/^(\s*)([-*+]|\d+\.)\s+(.*)$/);
       if (listMatch) {
         const ordered = /^\d+\.$/.test(listMatch[2]);
@@ -355,7 +377,6 @@
         while (i < lines.length) {
           const itemLine = lines[i];
           if (!itemLine.trim()) {
-            // Check if next non-empty line continues the list
             if (i + 1 < lines.length && /^(\s*)([-*+]|\d+\.)\s+/.test(lines[i + 1])) {
               i++;
               continue;
@@ -391,12 +412,15 @@
           }
         }
 
-        blocks.push({
-          type: 'list',
-          ordered,
-          items,
-          startLine
-        });
+        pushBlock(
+          {
+            type: 'list',
+            ordered,
+            items
+          },
+          startLine,
+          i - 1
+        );
         continue;
       }
 
@@ -415,6 +439,7 @@
           /^\s*>/.test(nextLine) ||
           /^(\s*)([-*+]|\d+\.)\s+/.test(nextLine) ||
           nextTrim.startsWith('$$') ||
+          nextTrim.startsWith('\\[') ||
           (nextLine.includes('|') &&
             i + 1 < lines.length &&
             /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)+\|?\s*$/.test(lines[i + 1]))
@@ -425,110 +450,554 @@
         i++;
       }
 
-      blocks.push({
-        type: 'paragraph',
-        text: paraLines.join('\n'),
-        startLine
-      });
+      pushBlock(
+        {
+          type: 'paragraph',
+          text: paraLines.join('\n')
+        },
+        startLine,
+        i - 1
+      );
     }
 
-    return { frontmatter, blocks, headings };
+    return { frontmatter, blocks, headings, lines };
   }
 
   /**
-   * Format a LaTeX math expression into rich DOM nodes (symbols, fractions, super/subscripts).
+   * Dictionary of LaTeX commands to Unicode mathematical symbols.
+   */
+  const LATEX_SYMBOLS = {
+    alpha: 'α',
+    beta: 'β',
+    gamma: 'γ',
+    delta: 'δ',
+    epsilon: 'ϵ',
+    varepsilon: 'ε',
+    zeta: 'ζ',
+    eta: 'η',
+    theta: 'θ',
+    vartheta: 'ϑ',
+    iota: 'ι',
+    kappa: 'κ',
+    lambda: 'λ',
+    mu: 'μ',
+    nu: 'ν',
+    xi: 'ξ',
+    pi: 'π',
+    rho: 'ρ',
+    sigma: 'σ',
+    tau: 'τ',
+    upsilon: 'υ',
+    phi: 'ϕ',
+    varphi: 'φ',
+    chi: 'χ',
+    psi: 'ψ',
+    omega: 'ω',
+    Gamma: 'Γ',
+    Delta: 'Δ',
+    Theta: 'Θ',
+    Lambda: 'Λ',
+    Xi: 'Ξ',
+    Pi: 'Π',
+    Sigma: 'Σ',
+    Upsilon: 'Υ',
+    Phi: 'Φ',
+    Psi: 'Ψ',
+    Omega: 'Ω',
+    sum: '∑',
+    prod: '∏',
+    coprod: '∐',
+    int: '∫',
+    iint: '∬',
+    iiint: '∭',
+    oint: '∮',
+    infty: '∞',
+    approx: '≈',
+    cong: '≅',
+    equiv: '≡',
+    sim: '∼',
+    simeq: '≃',
+    propto: '∝',
+    neq: '≠',
+    ne: '≠',
+    leq: '≤',
+    le: '≤',
+    geq: '≥',
+    ge: '≥',
+    ll: '≪',
+    gg: '≫',
+    prec: '≺',
+    succ: '≻',
+    times: '×',
+    div: '÷',
+    cdot: '·',
+    ast: '∗',
+    star: '⋆',
+    circ: '∘',
+    bullet: '∙',
+    pm: '±',
+    mp: '∓',
+    oplus: '⊕',
+    ominus: '⊖',
+    otimes: '⊗',
+    oslash: '⊘',
+    to: '→',
+    rightarrow: '→',
+    leftarrow: '←',
+    leftrightarrow: '↔',
+    longrightarrow: '⟶',
+    longleftarrow: '⟵',
+    Rightarrow: '⇒',
+    Leftarrow: '⇐',
+    Leftrightarrow: '⇔',
+    Longrightarrow: '⟹',
+    iff: '⇔',
+    implies: '⟹',
+    mapsto: '↦',
+    uparrow: '↑',
+    downarrow: '↓',
+    in: '∈',
+    notin: '∉',
+    ni: '∋',
+    subset: '⊂',
+    supset: '⊃',
+    subseteq: '⊆',
+    supseteq: '⊇',
+    cup: '∪',
+    cap: '∩',
+    setminus: '∖',
+    emptyset: '∅',
+    varnothing: '∅',
+    forall: '∀',
+    exists: '∃',
+    nexists: '∄',
+    neg: '¬',
+    lnot: '¬',
+    land: '∧',
+    lor: '∨',
+    partial: '∂',
+    nabla: '∇',
+    ell: 'ℓ',
+    hbar: 'ℏ',
+    Re: 'ℜ',
+    Im: 'ℑ',
+    aleph: 'ℵ',
+    wp: '℘',
+    angle: '∠',
+    triangle: '△',
+    perp: '⊥',
+    parallel: '∥',
+    mid: '∣',
+    dots: '…',
+    ldots: '…',
+    cdots: '⋯',
+    vdots: '⋮',
+    ddots: '⋱',
+    prime: '′',
+    checkmark: '✓',
+    quad: '  ',
+    qquad: '    ',
+    ',': ' ',
+    ';': ' ',
+    ':': ' ',
+    '!': '',
+    '{': '{',
+    '}': '}',
+    '%': '%',
+    '&': '&',
+    '_': '_',
+    '#': '#'
+  };
+
+  const CALLIGRAPHIC_MAP = {
+    A: '𝒜', B: 'ℬ', C: '𝒞', D: '𝒟', E: 'ℰ', F: 'ℱ', G: '𝒢', H: 'ℋ', I: 'ℐ',
+    J: '𝒥', K: '𝒦', L: 'ℒ', M: 'ℳ', N: '𝒩', O: '𝒪', P: '𝒫', Q: '𝒬', R: 'ℛ',
+    S: '𝒮', T: '𝒯', U: '𝒰', V: '𝒱', W: '𝒲', X: '𝒳', Y: '𝒴', Z: '𝒵'
+  };
+
+  const BLACKBOARD_MAP = {
+    A: '𝔸', B: '𝔹', C: 'ℂ', D: '𝔻', E: '𝔼', F: '𝔽', G: '𝔾', H: 'ℍ', I: '𝕀',
+    J: '𝕁', K: '𝕂', L: '𝕃', M: '𝕄', N: 'ℕ', O: '𝕆', P: 'ℙ', Q: 'ℚ', R: 'ℝ',
+    S: '𝕊', T: '𝕋', U: '𝕌', V: '𝕍', W: '𝕎', X: '𝕏', Y: '𝕐', Z: 'ℤ'
+  };
+
+  /**
+   * Read a balanced `{...}` group or a single LaTeX token starting at index `pos`.
+   * Properly handles arbitrarily nested curly braces!
+   * @param {string} src
+   * @param {number} pos
+   * @returns {{ content: string, nextPos: number }}
+   */
+  function readLatexArgument(src, pos) {
+    let i = pos;
+    while (i < src.length && /\s/.test(src[i])) {
+      i++;
+    }
+    if (i >= src.length) {
+      return { content: '', nextPos: i };
+    }
+
+    if (src[i] === '{') {
+      let depth = 1;
+      const start = i + 1;
+      i++;
+      while (i < src.length && depth > 0) {
+        if (src[i] === '\\') {
+          i += 2;
+          continue;
+        }
+        if (src[i] === '{') depth++;
+        else if (src[i] === '}') depth--;
+        i++;
+      }
+      const end = depth === 0 ? i - 1 : i;
+      return { content: src.slice(start, end), nextPos: i };
+    }
+
+    if (src[i] === '\\') {
+      let end = i + 1;
+      if (end < src.length && /[A-Za-z]/.test(src[end])) {
+        while (end < src.length && /[A-Za-z]/.test(src[end])) {
+          end++;
+        }
+      } else if (end < src.length) {
+        end++;
+      }
+      return { content: src.slice(i, end), nextPos: end };
+    }
+
+    return { content: src[i], nextPos: i + 1 };
+  }
+
+  /**
+   * Read an optional `[...]` argument starting at index `pos`.
+   * @param {string} src
+   * @param {number} pos
+   * @returns {{ content: string | null, nextPos: number }}
+   */
+  function readOptionalBracketArg(src, pos) {
+    let i = pos;
+    while (i < src.length && /\s/.test(src[i])) {
+      i++;
+    }
+    if (i < src.length && src[i] === '[') {
+      let depth = 1;
+      const start = i + 1;
+      i++;
+      while (i < src.length && depth > 0) {
+        if (src[i] === '[') depth++;
+        else if (src[i] === ']') depth--;
+        i++;
+      }
+      const end = depth === 0 ? i - 1 : i;
+      return { content: src.slice(start, end), nextPos: i };
+    }
+    return { content: null, nextPos: pos };
+  }
+
+  /**
+   * Recursively parse a LaTeX math string into DOM elements inside `parent`.
+   * Supports arbitrarily nested fractions, subscripts, superscripts, roots, font styles, and matrices.
+   * @param {HTMLElement} parent
+   * @param {string} expr
+   */
+  function appendLatexNodes(parent, expr) {
+    const src = String(expr || '');
+    let i = 0;
+
+    while (i < src.length) {
+      const ch = src[i];
+
+      // Skip excess whitespace but preserve spacing around operators
+      if (/\s/.test(ch)) {
+        i++;
+        continue;
+      }
+
+      // Curly-brace group { ... }
+      if (ch === '{') {
+        const group = readLatexArgument(src, i);
+        const span = el('span');
+        appendLatexNodes(span, group.content);
+        parent.appendChild(span);
+        i = group.nextPos;
+        continue;
+      }
+
+      // Superscript ^ or Subscript _ (supports combined x_a^b or x^b_a)
+      if (ch === '^' || ch === '_') {
+        let supContent = null;
+        let subContent = null;
+
+        while (i < src.length && (src[i] === '^' || src[i] === '_')) {
+          const isSup = src[i] === '^';
+          const arg = readLatexArgument(src, i + 1);
+          if (isSup) supContent = arg.content;
+          else subContent = arg.content;
+          i = arg.nextPos;
+          while (i < src.length && /\s/.test(src[i])) i++;
+        }
+
+        if (supContent !== null && subContent !== null) {
+          const scriptWrap = el('span', 'agy-math-script');
+          const supEl = el('span');
+          appendLatexNodes(supEl, supContent);
+          const subEl = el('span');
+          appendLatexNodes(subEl, subContent);
+          scriptWrap.appendChild(supEl);
+          scriptWrap.appendChild(subEl);
+          parent.appendChild(scriptWrap);
+        } else if (supContent !== null) {
+          const supEl = el('sup', 'agy-math-sup');
+          appendLatexNodes(supEl, supContent);
+          parent.appendChild(supEl);
+        } else if (subContent !== null) {
+          const subEl = el('sub', 'agy-math-sub');
+          appendLatexNodes(subEl, subContent);
+          parent.appendChild(subEl);
+        }
+        continue;
+      }
+
+      // LaTeX Command \cmd
+      if (ch === '\\') {
+        if (i + 1 < src.length && src[i + 1] === '\\') {
+          parent.appendChild(el('br'));
+          i += 2;
+          continue;
+        }
+
+        let cmdEnd = i + 1;
+        if (cmdEnd < src.length && /[A-Za-z]/.test(src[cmdEnd])) {
+          while (cmdEnd < src.length && /[A-Za-z]/.test(src[cmdEnd])) {
+            cmdEnd++;
+          }
+        } else if (cmdEnd < src.length) {
+          cmdEnd++;
+        }
+
+        const cmd = src.slice(i + 1, cmdEnd);
+        i = cmdEnd;
+
+        // 1. Fractions: \frac{num}{den}, \dfrac{num}{den}, \tfrac{num}{den}, \cfrac{num}{den}
+        if (cmd === 'frac' || cmd === 'dfrac' || cmd === 'tfrac' || cmd === 'cfrac') {
+          const numArg = readLatexArgument(src, i);
+          const denArg = readLatexArgument(src, numArg.nextPos);
+          i = denArg.nextPos;
+
+          const frac = el('span', 'agy-math-frac');
+          const numEl = el('span', 'agy-math-frac-num');
+          const denEl = el('span', 'agy-math-frac-den');
+          appendLatexNodes(numEl, numArg.content);
+          appendLatexNodes(denEl, denArg.content);
+          frac.appendChild(numEl);
+          frac.appendChild(denEl);
+          parent.appendChild(frac);
+          continue;
+        }
+
+        // 2. Square / N-th Root: \sqrt[n]{x} or \sqrt{x}
+        if (cmd === 'sqrt') {
+          const opt = readOptionalBracketArg(src, i);
+          const bodyArg = readLatexArgument(src, opt.nextPos);
+          i = bodyArg.nextPos;
+
+          const sqrtWrap = el('span', 'agy-math-sqrt');
+          if (opt.content) {
+            const rootIdx = el('sup', 'agy-math-sup');
+            appendLatexNodes(rootIdx, opt.content);
+            sqrtWrap.appendChild(rootIdx);
+          }
+          sqrtWrap.appendChild(el('span', 'agy-math-sqrt-sign', '√'));
+          const bodyEl = el('span', 'agy-math-sqrt-body');
+          appendLatexNodes(bodyEl, bodyArg.content);
+          sqrtWrap.appendChild(bodyEl);
+          parent.appendChild(sqrtWrap);
+          continue;
+        }
+
+        // 3. Calligraphic \mathcal{...}
+        if (cmd === 'mathcal') {
+          const arg = readLatexArgument(src, i);
+          i = arg.nextPos;
+          const raw = arg.content.trim();
+          const mapped = raw
+            .split('')
+            .map((c) => CALLIGRAPHIC_MAP[c] || c)
+            .join('');
+          parent.appendChild(el('span', 'agy-math-cal', mapped));
+          continue;
+        }
+
+        // 4. Blackboard Bold \mathbb{...}
+        if (cmd === 'mathbb') {
+          const arg = readLatexArgument(src, i);
+          i = arg.nextPos;
+          const raw = arg.content.trim();
+          const mapped = raw
+            .split('')
+            .map((c) => BLACKBOARD_MAP[c] || c)
+            .join('');
+          parent.appendChild(el('span', 'agy-math-bb', mapped));
+          continue;
+        }
+
+        // 5. Text / Font styles: \text{...}, \mathrm{...}, \operatorname{...}, \mathbf{...}, \mathit{...}
+        if (
+          cmd === 'text' ||
+          cmd === 'textrm' ||
+          cmd === 'mathrm' ||
+          cmd === 'operatorname' ||
+          cmd === 'mathbf' ||
+          cmd === 'boldsymbol' ||
+          cmd === 'bm' ||
+          cmd === 'mathit' ||
+          cmd === 'textit' ||
+          cmd === 'mathtt'
+        ) {
+          const arg = readLatexArgument(src, i);
+          i = arg.nextPos;
+          const span = el('span', cmd === 'text' || cmd === 'textrm' ? 'agy-math-text' : '');
+          if (cmd === 'mathbf' || cmd === 'boldsymbol' || cmd === 'bm') {
+            span.style.fontWeight = '700';
+          } else if (cmd === 'mathit' || cmd === 'textit') {
+            span.style.fontStyle = 'italic';
+          } else if (cmd === 'mathtt') {
+            span.style.fontFamily = 'var(--agy-font-mono)';
+          }
+          appendLatexNodes(span, arg.content);
+          parent.appendChild(span);
+          continue;
+        }
+
+        // 6. Overline / Underline / Hat / Bar / Vec / Tilde
+        if (
+          cmd === 'overline' ||
+          cmd === 'underline' ||
+          cmd === 'hat' ||
+          cmd === 'widehat' ||
+          cmd === 'bar' ||
+          cmd === 'vec' ||
+          cmd === 'tilde' ||
+          cmd === 'widetilde'
+        ) {
+          const arg = readLatexArgument(src, i);
+          i = arg.nextPos;
+          if (cmd === 'overline' || cmd === 'bar') {
+            const span = el('span', 'agy-math-overline');
+            appendLatexNodes(span, arg.content);
+            parent.appendChild(span);
+          } else if (cmd === 'underline') {
+            const span = el('span', 'agy-math-underline');
+            appendLatexNodes(span, arg.content);
+            parent.appendChild(span);
+          } else {
+            constcombMap = {
+              hat: '\u0302',
+              widehat: '\u0302',
+              vec: '\u20d7',
+              tilde: '\u0303',
+              widetilde: '\u0303'
+            };
+            const span = el('span');
+            appendLatexNodes(span, arg.content);
+            span.appendChild(document.createTextNode(constcombMap[cmd] || ''));
+            parent.appendChild(span);
+          }
+          continue;
+        }
+
+        // 7. Sizing modifiers \left, \right, \big, \Big, \bigl, \bigr
+        if (cmd === 'left' || cmd === 'right' || cmd === 'big' || cmd === 'Big' || cmd === 'bigl' || cmd === 'bigr') {
+          while (i < src.length && /\s/.test(src[i])) i++;
+          if (i < src.length) {
+            if (src[i] === '.') {
+              i++;
+            } else if (src.slice(i, i + 2) === '\\{' || src.slice(i, i + 2) === '\\}') {
+              parent.appendChild(el('span', 'agy-math-op', src[i + 1]));
+              i += 2;
+            } else if (src.slice(i, i + 6) === '\\lvert' || src.slice(i, i + 6) === '\\rvert') {
+              parent.appendChild(el('span', 'agy-math-op', '|'));
+              i += 6;
+            } else {
+              parent.appendChild(el('span', 'agy-math-op', src[i]));
+              i++;
+            }
+          }
+          continue;
+        }
+
+        // 8. Environments \begin{...} ... \end{...}
+        if (cmd === 'begin') {
+          const envArg = readLatexArgument(src, i);
+          const envName = envArg.content.trim();
+          const endTag = `\\end{${envName}}`;
+          const endIdx = src.indexOf(endTag, envArg.nextPos);
+          if (endIdx !== -1) {
+            const body = src.slice(envArg.nextPos, endIdx);
+            i = endIdx + endTag.length;
+            const mat = el('span', 'agy-math-matrix');
+            const rows = body.split(/\\\\/).map((r) => r.trim()).filter(Boolean);
+            rows.forEach((rStr) => {
+              const rowEl = el('span', 'agy-math-matrix-row');
+              rStr.split('&').forEach((cellStr) => {
+                const cellEl = el('span', 'agy-math-matrix-cell');
+                appendLatexNodes(cellEl, cellStr.trim());
+                rowEl.appendChild(cellEl);
+              });
+              mat.appendChild(rowEl);
+            });
+            parent.appendChild(mat);
+            continue;
+          }
+        }
+
+        // 9. Named trig/limit functions
+        if (/^(?:sin|cos|tan|cot|sec|csc|arcsin|arccos|arctan|sinh|cosh|tanh|log|ln|lg|exp|lim|sup|inf|max|min|det|dim|ker|deg|gcd|Pr|arg|hom)$/.test(cmd)) {
+          parent.appendChild(el('span', 'agy-math-text agy-math-op', cmd));
+          continue;
+        }
+
+        // 10. Symbol Lookup
+        if (Object.prototype.hasOwnProperty.call(LATEX_SYMBOLS, cmd)) {
+          parent.appendChild(el('span', 'agy-math-op', LATEX_SYMBOLS[cmd]));
+          continue;
+        }
+
+        // Fallback: display command name cleanly
+        parent.appendChild(el('span', '', cmd));
+        continue;
+      }
+
+      // Binary operators / relations spacing
+      if ('+-=<>≈≠≤≥≪≫×÷·'.includes(ch)) {
+        parent.appendChild(el('span', 'agy-math-op', ch === '-' ? '−' : ch));
+        i++;
+        continue;
+      }
+
+      // Plain characters (variables, numbers, punctuation)
+      let runEnd = i + 1;
+      while (
+        runEnd < src.length &&
+        !/[\s\\{}_^+\-=<>]/.test(src[runEnd])
+      ) {
+        runEnd++;
+      }
+      parent.appendChild(document.createTextNode(src.slice(i, runEnd)));
+      i = runEnd;
+    }
+  }
+
+  /**
+   * Render a LaTeX math expression into rich KaTeX-like DOM elements.
    * @param {string} expr
    * @param {boolean} isBlock
    * @returns {HTMLElement}
    */
   function renderMathDom(expr, isBlock) {
     const container = el(isBlock ? 'div' : 'span', isBlock ? 'agy-math-block' : 'agy-math-inline');
-
-    const symbolMap = {
-      '\\alpha': 'α',
-      '\\beta': 'β',
-      '\\gamma': 'γ',
-      '\\delta': 'δ',
-      '\\epsilon': 'ε',
-      '\\theta': 'θ',
-      '\\lambda': 'λ',
-      '\\mu': 'μ',
-      '\\pi': 'π',
-      '\\sigma': 'σ',
-      '\\omega': 'ω',
-      '\\Delta': 'Δ',
-      '\\Sigma': 'Σ',
-      '\\Omega': 'Ω',
-      '\\sum': '∑',
-      '\\prod': '∏',
-      '\\int': '∫',
-      '\\infty': '∞',
-      '\\approx': '≈',
-      '\\neq': '≠',
-      '\\leq': '≤',
-      '\\le': '≤',
-      '\\geq': '≥',
-      '\\ge': '≥',
-      '\\times': '×',
-      '\\cdot': '·',
-      '\\pm': '±',
-      '\\to': '→',
-      '\\rightarrow': '→',
-      '\\leftarrow': '←',
-      '\\Rightarrow': '⇒',
-      '\\iff': '⇔',
-      '\\in': '∈',
-      '\\notin': '∉',
-      '\\subset': '⊂',
-      '\\subseteq': '⊆',
-      '\\cup': '∪',
-      '\\cap': '∩',
-      '\\forall': '∀',
-      '\\exists': '∃',
-      '\\partial': '∂',
-      '\\nabla': '∇'
-    };
-
-    let text = String(expr || '').trim();
-    const symKeys = Object.keys(symbolMap);
-    for (let i = 0; i < symKeys.length; i++) {
-      const k = symKeys[i];
-      text = text.split(k).join(symbolMap[k]);
-    }
-
-    // Parse \frac{a}{b}, ^{sup}, _{sub}, \sqrt{x}, \text{...}
-    const tokenRegex = /\\frac\{([^{}]*)\}\{([^{}]*)\}|\\sqrt\{([^{}]*)\}|\\text\{([^{}]*)\}|\^(\{[^{}]*\}|[A-Za-z0-9+-])|_(\{[^{}]*\}|[A-Za-z0-9+-])/g;
-    let lastIndex = 0;
-    let match;
-
-    while ((match = tokenRegex.exec(text)) !== null) {
-      if (match.index > lastIndex) {
-        container.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
-      }
-      if (match[1] !== undefined && match[2] !== undefined) {
-        const frac = el('span', 'agy-math-frac');
-        frac.appendChild(el('span', 'agy-math-frac-num', match[1]));
-        frac.appendChild(el('span', 'agy-math-frac-den', match[2]));
-        container.appendChild(frac);
-      } else if (match[3] !== undefined) {
-        const sqrt = el('span', '', '√(' + match[3] + ')');
-        container.appendChild(sqrt);
-      } else if (match[4] !== undefined) {
-        container.appendChild(el('span', '', match[4]));
-      } else if (match[5] !== undefined) {
-        const supVal = match[5].replace(/^\{|\}$/g, '');
-        container.appendChild(el('sup', '', supVal));
-      } else if (match[6] !== undefined) {
-        const subVal = match[6].replace(/^\{|\}$/g, '');
-        container.appendChild(el('sub', '', subVal));
-      }
-      lastIndex = tokenRegex.lastIndex;
-    }
-
-    if (lastIndex < text.length) {
-      container.appendChild(document.createTextNode(text.slice(lastIndex)));
-    }
-
+    appendLatexNodes(container, expr);
     return container;
   }
 
@@ -544,7 +1013,7 @@
       return;
     }
 
-    const pattern = /(!\[([^\]]*)\]\(([^)]+)\))|(\[([^\]]+)\]\(([^)]+)\))|(`([^`]+)`)|(\$\$([^$]+)\$\$|\$([^$\n]+)\$)|(\*\*([^*]+)\*\*|__([^_]+)__)|(\*([^*\n]+)\*|_([^_\n]+)_)|(~~([^~]+)~~)|(<br\s*\/?>)/gi;
+    const pattern = /(!\[([^\]]*)\]\(([^)]+)\))|(\[([^\]]+)\]\(([^)]+)\))|(`([^`]+)`)|(\$\$([\s\S]+?)\$\$|\$((?:\\\$|[^$\n])+?)\$|\\\(([\s\S]+?)\\\))|(\*\*([^*]+)\*\*|__([^_]+)__)|(\*([^*\n]+)\*|_([^_\n]+)_)|(~~([^~]+)~~)|(<br\s*\/?>)/gi;
 
     let lastIdx = 0;
     let match;
@@ -555,7 +1024,6 @@
       }
 
       if (match[1]) {
-        // Image ![alt](src)
         const alt = match[2] || '';
         const rawSrc = (match[3] || '').trim();
         const wrap = el('span', 'agy-image-wrap');
@@ -574,7 +1042,6 @@
         }
         parent.appendChild(wrap);
       } else if (match[4]) {
-        // Link [label](href) — check if it is a file:// or local code reference pill
         const rawLabel = match[5].replace(/^`|`$/g, '');
         const rawHref = (match[6] || '').trim();
         const isFilePill =
@@ -597,6 +1064,7 @@
 
           pill.addEventListener('click', (ev) => {
             ev.preventDefault();
+            ev.stopPropagation();
             if (callbacks && typeof callbacks.onOpenFileLink === 'function') {
               callbacks.onOpenFileLink(rawHref);
             }
@@ -606,6 +1074,7 @@
           const anchor = el('a', 'agy-link', rawLabel, { href: rawHref });
           anchor.addEventListener('click', (ev) => {
             ev.preventDefault();
+            ev.stopPropagation();
             const targetEl = document.getElementById(rawHref.slice(1));
             if (targetEl) {
               targetEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -616,6 +1085,7 @@
           const link = el('a', 'agy-link', rawLabel, { href: '#', title: rawHref });
           link.addEventListener('click', (ev) => {
             ev.preventDefault();
+            ev.stopPropagation();
             if (callbacks && typeof callbacks.onOpenExternalLink === 'function') {
               callbacks.onOpenExternalLink(rawHref);
             }
@@ -623,29 +1093,23 @@
           parent.appendChild(link);
         }
       } else if (match[7]) {
-        // Inline code `code`
         parent.appendChild(el('code', 'agy-inline-code', match[8]));
       } else if (match[9]) {
-        // Inline math $...$
-        const expr = match[10] || match[11] || '';
+        const expr = match[10] || match[11] || match[12] || '';
         parent.appendChild(renderMathDom(expr, false));
-      } else if (match[12]) {
-        // Bold **...**
+      } else if (match[13]) {
         const strong = el('strong');
-        appendInlineNodes(strong, match[13] || match[14], callbacks);
+        appendInlineNodes(strong, match[14] || match[15], callbacks);
         parent.appendChild(strong);
-      } else if (match[15]) {
-        // Italic *...*
+      } else if (match[16]) {
         const em = el('em');
-        appendInlineNodes(em, match[16] || match[17], callbacks);
+        appendInlineNodes(em, match[17] || match[18], callbacks);
         parent.appendChild(em);
-      } else if (match[18]) {
-        // Strikethrough ~~...~~
+      } else if (match[19]) {
         const del = el('del');
-        appendInlineNodes(del, match[19], callbacks);
+        appendInlineNodes(del, match[20], callbacks);
         parent.appendChild(del);
-      } else if (match[20]) {
-        // <br>
+      } else if (match[21]) {
         parent.appendChild(el('br'));
       }
 
@@ -700,8 +1164,29 @@
   }
 
   /**
+   * Compute intersection point on the border of a rectangle centered at (cx, cy) with size (w, h)
+   * towards target point (tx, ty).
+   */
+  function getRectBorderPoint(cx, cy, w, h, tx, ty) {
+    const dx = tx - cx;
+    const dy = ty - cy;
+    if (dx === 0 && dy === 0) {
+      return { x: cx, y: cy };
+    }
+    const hw = w / 2;
+    const hh = h / 2;
+    const scaleX = Math.abs(dx) > 0.0001 ? hw / Math.abs(dx) : Infinity;
+    const scaleY = Math.abs(dy) > 0.0001 ? hh / Math.abs(dy) : Infinity;
+    const scale = Math.min(scaleX, scaleY);
+    return {
+      x: cx + dx * scale,
+      y: cy + dy * scale
+    };
+  }
+
+  /**
    * Parse and render Mermaid diagrams (flowchart/graph, erDiagram, sequenceDiagram,
-   * stateDiagram, classDiagram, xychart-beta) into interactive SVG elements using createElementNS.
+   * stateDiagram, xychart-beta) into interactive SVG elements.
    * @param {string} code
    * @returns {{ svg: SVGElement, diagramType: string }}
    */
@@ -756,6 +1241,14 @@
     const nodeStyles = new Map();
     let currentSubgraph = null;
 
+    function cleanLabel(lbl) {
+      return String(lbl)
+        .replace(/^["']|["']$/g, '')
+        .split(/<br\s*\/?>|\\n/i)
+        .map((s) => s.trim())
+        .filter(Boolean);
+    }
+
     function ensureNode(id, rawLabel, shape) {
       const cleanId = id.trim();
       if (!cleanId) return null;
@@ -777,14 +1270,6 @@
       return nodes.get(cleanId);
     }
 
-    function cleanLabel(lbl) {
-      return String(lbl)
-        .replace(/^["']|["']$/g, '')
-        .split(/<br\s*\/?>|\\n/i)
-        .map((s) => s.trim())
-        .filter(Boolean);
-    }
-
     function parseNodeToken(token) {
       const t = token.trim();
       if (!t) return null;
@@ -792,7 +1277,6 @@
         return ensureNode('__start_end__', '●', 'circle');
       }
 
-      // Match shapes: ID[(Cylinder)], ID([Stadium]), ID((Circle)), ID{Diamond}, ID(Round), ID[Rect]
       const mCyl = t.match(/^([A-Za-z0-9_.-]+)\s*\[\((.+)\)\]$/);
       if (mCyl) return ensureNode(mCyl[1], mCyl[2], 'cylinder');
 
@@ -824,7 +1308,6 @@
         continue;
       }
 
-      // Parse style directive: style NodeID fill:#1e3a5f,stroke:#60a5fa,color:#fff
       const styleMatch = line.match(/^style\s+([A-Za-z0-9_.-]+)\s+(.+)$/i);
       if (styleMatch) {
         const targetId = styleMatch[1];
@@ -839,7 +1322,6 @@
         continue;
       }
 
-      // Parse subgraph
       const sgMatch = line.match(/^subgraph\s+([^\s[]+)(?:\s*\[(.+)\])?(.*)$/i);
       if (sgMatch) {
         const sgId = sgMatch[1].trim();
@@ -854,7 +1336,6 @@
         continue;
       }
 
-      // Split chained edges on a line: A -->|label| B <--> C
       const arrowRegex = /\s*(<-->|<-\.->|-->|==>|-\.->|---|--[^>]+-->|--[^>]+---)\s*(?:\|([^|]*)\|\s*)?/g;
       if (arrowRegex.test(line)) {
         arrowRegex.lastIndex = 0;
@@ -898,7 +1379,6 @@
       }
     }
 
-    // Compute topological layers (ranks) for layout
     const nodeList = Array.from(nodes.values());
     if (nodeList.length === 0) {
       nodeList.push({ id: 'empty', label: ['Empty Diagram'], shape: 'rect' });
@@ -937,7 +1417,7 @@
       for (let k = 0; k < neighbors.length; k++) {
         const nxt = neighbors[k];
         if (!rankMap.has(nxt) || rankMap.get(nxt) < currRank + 1) {
-          if ((currRank + 1) < nodeList.length) {
+          if (currRank + 1 < nodeList.length) {
             rankMap.set(nxt, currRank + 1);
             queue.push(nxt);
           }
@@ -960,7 +1440,6 @@
       layers.get(r).push(n);
     });
 
-    // Measure each node box
     nodeList.forEach((n) => {
       let maxChars = 6;
       n.label.forEach((lineStr) => {
@@ -970,20 +1449,20 @@
         }
         if (len > maxChars) maxChars = len;
       });
-      n.width = Math.max(120, Math.min(280, Math.round(maxChars * 8.5 + 34)));
-      n.height = Math.max(46, n.label.length * 20 + 24);
+      n.width = Math.max(130, Math.min(290, Math.round(maxChars * 8.5 + 36)));
+      n.height = Math.max(48, n.label.length * 20 + 26);
       if (n.shape === 'diamond') {
         n.width += 28;
         n.height += 18;
       }
     });
 
-    const layerGapX = isHorizontal ? 220 : 190;
-    const layerGapY = isHorizontal ? 105 : 115;
-    const padX = 48;
-    const padY = 48;
+    const layerGapX = isHorizontal ? 250 : 210;
+    const layerGapY = isHorizontal ? 115 : 125;
+    const padX = 56;
+    const padY = 56;
 
-    let maxCanvasX = 400;
+    let maxCanvasX = 420;
     let maxCanvasY = 220;
 
     for (let r = 0; r <= maxRank; r++) {
@@ -1012,7 +1491,6 @@
       height: Math.ceil(maxCanvasY)
     });
 
-    // Arrowhead markers
     const defs = svgEl('defs');
     const markerEnd = svgEl('marker', {
       id: 'agy-arrow-end',
@@ -1027,19 +1505,20 @@
     defs.appendChild(markerEnd);
     svg.appendChild(defs);
 
-    // Render Subgraph bounding boxes
+    // 1. Subgraph background boxes
     subgraphs.forEach((sg) => {
       const sgNodes = sg.nodeIds.map((id) => nodes.get(id)).filter(Boolean);
       if (sgNodes.length === 0) return;
+      const sgStyle = nodeStyles.get(sg.id) || {};
       let minX = Infinity;
       let minY = Infinity;
       let maxX = -Infinity;
       let maxY = -Infinity;
       sgNodes.forEach((n) => {
-        minX = Math.min(minX, n.cx - n.width / 2 - 18);
-        minY = Math.min(minY, n.cy - n.height / 2 - 28);
-        maxX = Math.max(maxX, n.cx + n.width / 2 + 18);
-        maxY = Math.max(maxY, n.cy + n.height / 2 + 16);
+        minX = Math.min(minX, n.cx - n.width / 2 - 20);
+        minY = Math.min(minY, n.cy - n.height / 2 - 32);
+        maxX = Math.max(maxX, n.cx + n.width / 2 + 20);
+        maxY = Math.max(maxY, n.cy + n.height / 2 + 18);
       });
       svg.appendChild(
         svgEl('rect', {
@@ -1048,8 +1527,9 @@
           width: maxX - minX,
           height: maxY - minY,
           rx: 10,
-          fill: 'rgba(96, 165, 250, 0.05)',
-          stroke: 'rgba(148, 163, 184, 0.35)',
+          fill: sgStyle.fill ? `${sgStyle.fill}33` : 'rgba(96, 165, 250, 0.06)',
+          stroke: sgStyle.stroke || 'rgba(148, 163, 184, 0.4)',
+          'stroke-width': '1.5',
           'stroke-dasharray': '5,4'
         })
       );
@@ -1057,47 +1537,37 @@
         svgEl(
           'text',
           {
-            x: minX + 12,
-            y: minY + 18,
-            fill: '#94a3b8',
-            'font-size': '11.5',
-            'font-weight': '600'
+            x: minX + 14,
+            y: minY + 20,
+            fill: sgStyle.stroke || '#94a3b8',
+            'font-size': '12',
+            'font-weight': '700'
           },
           sg.title
         )
       );
     });
 
-    // Render Edges
+    const edgeLabelsLayer = svgEl('g');
+
+    // 2. Edges
     edges.forEach((e) => {
       const fromNode = nodes.get(e.from);
       const toNode = nodes.get(e.to);
       if (!fromNode || !toNode) return;
 
-      const dx = toNode.cx - fromNode.cx;
-      const dy = toNode.cy - fromNode.cy;
-      let x1 = fromNode.cx;
-      let y1 = fromNode.cy;
-      let x2 = toNode.cx;
-      let y2 = toNode.cy;
+      const p1 = getRectBorderPoint(fromNode.cx, fromNode.cy, fromNode.width, fromNode.height, toNode.cx, toNode.cy);
+      const p2 = getRectBorderPoint(toNode.cx, toNode.cy, toNode.width + 8, toNode.height + 8, fromNode.cx, fromNode.cy);
 
-      if (Math.abs(dx) > Math.abs(dy)) {
-        x1 += dx > 0 ? fromNode.width / 2 : -fromNode.width / 2;
-        x2 -= dx > 0 ? toNode.width / 2 + 4 : -(toNode.width / 2 + 4);
-      } else {
-        y1 += dy > 0 ? fromNode.height / 2 : -fromNode.height / 2;
-        y2 -= dy > 0 ? toNode.height / 2 + 4 : -(toNode.height / 2 + 4);
-      }
-
-      const cx1 = (x1 + x2) / 2;
-      const cy1 = y1;
-      const cx2 = (x1 + x2) / 2;
-      const cy2 = y2;
+      const cx1 = (p1.x + p2.x) / 2;
+      const cy1 = p1.y;
+      const cx2 = (p1.x + p2.x) / 2;
+      const cy2 = p2.y;
       const pathAttrs = {
-        d: `M ${x1} ${y1} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${x2} ${y2}`,
+        d: `M ${p1.x} ${p1.y} C ${cx1} ${cy1}, ${cx2} ${cy2}, ${p2.x} ${p2.y}`,
         fill: 'none',
         stroke: '#60a5fa',
-        'stroke-width': '1.75',
+        'stroke-width': '1.85',
         'marker-end': 'url(#agy-arrow-end)'
       };
       if (e.bi) {
@@ -1109,28 +1579,33 @@
       svg.appendChild(svgEl('path', pathAttrs));
 
       if (e.label) {
-        const mx = (x1 + x2) / 2;
-        const my = (y1 + y2) / 2 - 6;
-        const lblWidth = e.label.length * 7.5 + 14;
-        svg.appendChild(
+        const mx = (p1.x + p2.x) / 2;
+        const my = (p1.y + p2.y) / 2;
+        let charUnits = 0;
+        for (let c = 0; c < e.label.length; c++) {
+          charUnits += e.label.charCodeAt(c) > 255 ? 1.8 : 1;
+        }
+        const lblWidth = Math.max(48, Math.round(charUnits * 7.2 + 16));
+        edgeLabelsLayer.appendChild(
           svgEl('rect', {
             x: mx - lblWidth / 2,
             y: my - 11,
             width: lblWidth,
-            height: 18,
-            rx: 4,
-            fill: '#18181b',
-            stroke: 'rgba(96, 165, 250, 0.35)'
+            height: 20,
+            rx: 5,
+            fill: '#0f172a',
+            stroke: '#3b82f6',
+            'stroke-width': '1.2'
           })
         );
-        svg.appendChild(
+        edgeLabelsLayer.appendChild(
           svgEl(
             'text',
             {
               x: mx,
-              y: my + 2,
+              y: my + 3,
               'text-anchor': 'middle',
-              fill: '#cbd5e1',
+              fill: '#e2e8f0',
               'font-size': '11'
             },
             e.label
@@ -1139,7 +1614,7 @@
       }
     });
 
-    // Render Nodes
+    // 3. Nodes
     nodeList.forEach((n) => {
       const g = svgEl('g');
       const customStyle = nodeStyles.get(n.id) || {};
@@ -1231,11 +1706,15 @@
       svg.appendChild(g);
     });
 
+    // 4. Foreground edge labels so they are never covered by nodes
+    svg.appendChild(edgeLabelsLayer);
+
     return svg;
   }
 
   /**
-   * Render Mermaid ER Diagram (`erDiagram`) to SVG.
+   * Render Mermaid ER Diagram (`erDiagram`) to SVG with non-overlapping curved routing
+   * and foreground relation badges.
    * @param {string[]} lines
    * @returns {SVGElement}
    */
@@ -1290,22 +1769,40 @@
     }
 
     const list = Array.from(entities.values());
-    const cols = Math.min(3, Math.max(1, list.length));
-    const boxW = 220;
-    const gapX = 290;
-    const gapY = 210;
+    const cols = Math.min(2, Math.max(1, list.length));
+    const boxW = 240;
+    const gapX = 380;
+    const padX = 56;
+    const padY = 64;
 
-    list.forEach((ent, idx) => {
-      const col = idx % cols;
-      const row = Math.floor(idx / cols);
-      ent.x = 40 + col * gapX;
-      ent.y = 40 + row * gapY;
-      ent.w = boxW;
-      ent.h = 36 + Math.max(1, ent.fields.length) * 24 + 8;
-    });
+    // Calculate each row's Y dynamically so tall tables never overlap the next row
+    let currentY = padY;
+    const numRows = Math.ceil(list.length / cols);
+    let maxCanvasW = padX * 2 + cols * boxW + Math.max(0, cols - 1) * (gapX - boxW);
 
-    const totalW = Math.max(480, cols * gapX + 40);
-    const totalH = Math.max(240, Math.ceil(list.length / cols) * gapY + 60);
+    for (let r = 0; r < numRows; r++) {
+      let rowMaxH = 90;
+      for (let c = 0; c < cols; c++) {
+        const idx = r * cols + c;
+        if (idx >= list.length) break;
+        const ent = list[idx];
+        ent.col = c;
+        ent.row = r;
+        ent.w = boxW;
+        ent.h = 38 + Math.max(1, ent.fields.length) * 24 + 12;
+        ent.x = padX + c * gapX;
+        ent.y = currentY;
+        ent.cx = ent.x + ent.w / 2;
+        ent.cy = ent.y + ent.h / 2;
+        if (ent.h > rowMaxH) {
+          rowMaxH = ent.h;
+        }
+      }
+      currentY += rowMaxH + 110;
+    }
+
+    const totalW = Math.max(560, maxCanvasW);
+    const totalH = Math.max(260, currentY - 40);
 
     const svg = svgEl('svg', {
       viewBox: `0 0 ${totalW} ${totalH}`,
@@ -1313,57 +1810,84 @@
       height: totalH
     });
 
-    // Draw relation lines
-    relations.forEach((rel) => {
+    const linesLayer = svgEl('g');
+    const boxesLayer = svgEl('g');
+    const labelsLayer = svgEl('g');
+
+    // 1. Relation curves & foreground labels
+    relations.forEach((rel, relIdx) => {
       const a = entities.get(rel.from);
       const b = entities.get(rel.to);
       if (!a || !b) return;
-      const x1 = a.x + a.w / 2;
-      const y1 = a.y + a.h / 2;
-      const x2 = b.x + b.w / 2;
-      const y2 = b.y + b.h / 2;
 
-      svg.appendChild(
-        svgEl('line', {
-          x1,
-          y1,
-          x2,
-          y2,
+      const p1 = getRectBorderPoint(a.cx, a.cy, a.w, a.h, b.cx, b.cy);
+      const p2 = getRectBorderPoint(b.cx, b.cy, b.w, b.h, a.cx, a.cy);
+
+      let pathD = `M ${p1.x} ${p1.y} L ${p2.x} ${p2.y}`;
+      let labelX = (p1.x + p2.x) / 2;
+      let labelY = (p1.y + p2.y) / 2;
+
+      if (a.row === b.row && Math.abs(a.col - b.col) > 1) {
+        // Curve above the intermediate box
+        const ctrlY = Math.min(a.y, b.y) - 44;
+        pathD = `M ${a.cx} ${a.y} Q ${(a.cx + b.cx) / 2} ${ctrlY} ${b.cx} ${b.y}`;
+        labelX = (a.cx + b.cx) / 2;
+        labelY = ctrlY + 14;
+      } else if (Math.abs(p1.y - p2.y) < 15) {
+        // Slight vertical offset if multiple horizontal relations exist
+        const curveOffset = (relIdx % 2 === 0 ? -1 : 1) * 14;
+        pathD = `M ${p1.x} ${p1.y} Q ${(p1.x + p2.x) / 2} ${(p1.y + p2.y) / 2 + curveOffset} ${p2.x} ${p2.y}`;
+        labelY += curveOffset * 0.5;
+      }
+
+      linesLayer.appendChild(
+        svgEl('path', {
+          d: pathD,
+          fill: 'none',
           stroke: '#60a5fa',
-          'stroke-width': '1.75'
+          'stroke-width': '2'
         })
       );
 
-      const mx = (x1 + x2) / 2;
-      const my = (y1 + y2) / 2;
-      const lblW = rel.label.length * 7.5 + 16;
-      svg.appendChild(
+      // Endpoint dots
+      linesLayer.appendChild(svgEl('circle', { cx: p1.x, cy: p1.y, r: 3.5, fill: '#60a5fa' }));
+      linesLayer.appendChild(svgEl('circle', { cx: p2.x, cy: p2.y, r: 3.5, fill: '#60a5fa' }));
+
+      let charUnits = 0;
+      for (let c = 0; c < rel.label.length; c++) {
+        charUnits += rel.label.charCodeAt(c) > 255 ? 1.8 : 1;
+      }
+      const lblW = Math.max(64, Math.round(charUnits * 7.2 + 18));
+
+      labelsLayer.appendChild(
         svgEl('rect', {
-          x: mx - lblW / 2,
-          y: my - 11,
+          x: labelX - lblW / 2,
+          y: labelY - 12,
           width: lblW,
-          height: 20,
-          rx: 4,
+          height: 22,
+          rx: 5,
           fill: '#0f172a',
-          stroke: '#3b82f6'
+          stroke: '#3b82f6',
+          'stroke-width': '1.25'
         })
       );
-      svg.appendChild(
+      labelsLayer.appendChild(
         svgEl(
           'text',
           {
-            x: mx,
-            y: my + 3,
+            x: labelX,
+            y: labelY + 3,
             'text-anchor': 'middle',
             fill: '#93c5fd',
-            'font-size': '11'
+            'font-size': '11.5',
+            'font-weight': '500'
           },
           rel.label
         )
       );
     });
 
-    // Draw entity tables
+    // 2. Entity table cards
     list.forEach((ent) => {
       const g = svgEl('g');
       g.appendChild(
@@ -1383,7 +1907,7 @@
           x: ent.x,
           y: ent.y,
           width: ent.w,
-          height: 32,
+          height: 34,
           rx: 8,
           fill: '#1e3a5f'
         })
@@ -1393,7 +1917,7 @@
           'text',
           {
             x: ent.x + ent.w / 2,
-            y: ent.y + 21,
+            y: ent.y + 22,
             'text-anchor': 'middle',
             fill: '#f8fafc',
             'font-size': '13',
@@ -1403,53 +1927,74 @@
         )
       );
 
-      ent.fields.forEach((f, fIdx) => {
-        const fy = ent.y + 52 + fIdx * 24;
+      if (ent.fields.length === 0) {
         g.appendChild(
           svgEl(
             'text',
             {
-              x: ent.x + 12,
-              y: fy,
-              fill: '#38bdf8',
+              x: ent.x + ent.w / 2,
+              y: ent.y + 58,
+              'text-anchor': 'middle',
+              fill: '#64748b',
               'font-size': '11.5',
-              'font-family': 'monospace'
+              'font-style': 'italic'
             },
-            f.type
+            '(实体表 / Entity)'
           )
         );
-        g.appendChild(
-          svgEl(
-            'text',
-            {
-              x: ent.x + 84,
-              y: fy,
-              fill: '#e2e8f0',
-              'font-size': '12'
-            },
-            f.name
-          )
-        );
-        if (f.key) {
+      } else {
+        ent.fields.forEach((f, fIdx) => {
+          const fy = ent.y + 54 + fIdx * 24;
           g.appendChild(
             svgEl(
               'text',
               {
-                x: ent.x + ent.w - 12,
+                x: ent.x + 12,
                 y: fy,
-                'text-anchor': 'end',
-                fill: '#fbbf24',
-                'font-size': '10.5',
-                'font-weight': '700'
+                fill: '#38bdf8',
+                'font-size': '11.5',
+                'font-family': 'monospace'
               },
-              f.key
+              f.type
             )
           );
-        }
-      });
+          g.appendChild(
+            svgEl(
+              'text',
+              {
+                x: ent.x + 98,
+                y: fy,
+                fill: '#e2e8f0',
+                'font-size': '12'
+              },
+              f.name
+            )
+          );
+          if (f.key) {
+            g.appendChild(
+              svgEl(
+                'text',
+                {
+                  x: ent.x + ent.w - 12,
+                  y: fy,
+                  'text-anchor': 'end',
+                  fill: '#fbbf24',
+                  'font-size': '10.5',
+                  'font-weight': '700'
+                },
+                f.key
+              )
+            );
+          }
+        });
+      }
 
-      svg.appendChild(g);
+      boxesLayer.appendChild(g);
     });
+
+    svg.appendChild(linesLayer);
+    svg.appendChild(boxesLayer);
+    svg.appendChild(labelsLayer);
 
     return svg;
   }
@@ -1620,275 +2165,504 @@
   }
 
   /**
-   * Render an array of AST blocks into a container DOM element.
+   * Render a single AST block's visual DOM representation into `targetContainer`.
+   * @param {HTMLElement} targetContainer
+   * @param {any} block
+   * @param {object} callbacks
+   */
+  function renderSingleBlockContent(targetContainer, block, callbacks) {
+    switch (block.type) {
+      case 'heading': {
+        const wrap = el('div', 'agy-heading-wrap', null, { id: block.id || '' });
+        const hTag = `h${Math.min(6, Math.max(1, block.level))}`;
+        const hNode = el(hTag, 'agy-heading');
+        appendInlineNodes(hNode, block.text, callbacks);
+        wrap.appendChild(hNode);
+        targetContainer.appendChild(wrap);
+        break;
+      }
+
+      case 'paragraph': {
+        const p = el('p', 'agy-p');
+        appendInlineNodes(p, block.text, callbacks);
+        targetContainer.appendChild(p);
+        break;
+      }
+
+      case 'hr': {
+        targetContainer.appendChild(el('hr', 'agy-hr'));
+        break;
+      }
+
+      case 'alert': {
+        const typeLower = block.alertType.toLowerCase();
+        const iconMap = {
+          note: 'ℹ️',
+          tip: '💡',
+          important: '⚡',
+          warning: '⚠️',
+          caution: '🛑'
+        };
+        const alertCard = el('div', `agy-alert alert-${typeLower}`);
+        const header = el('div', 'agy-alert-header');
+        header.appendChild(el('span', '', iconMap[typeLower] || 'ℹ️'));
+        header.appendChild(el('span', '', block.alertType));
+        alertCard.appendChild(header);
+
+        const body = el('div', 'agy-alert-body');
+        const nestedAst = parseMarkdownToAst(block.body);
+        nestedAst.blocks.forEach((b) => renderSingleBlockContent(body, b, callbacks));
+        alertCard.appendChild(body);
+        targetContainer.appendChild(alertCard);
+        break;
+      }
+
+      case 'blockquote': {
+        const bq = el('blockquote', 'agy-blockquote');
+        const nestedAst = parseMarkdownToAst(block.body);
+        nestedAst.blocks.forEach((b) => renderSingleBlockContent(bq, b, callbacks));
+        targetContainer.appendChild(bq);
+        break;
+      }
+
+      case 'list': {
+        const listEl = el(block.ordered ? 'ol' : 'ul', 'agy-list');
+        block.items.forEach((item) => {
+          const li = el('li', item.isTask ? 'agy-task-item' : '', null, {
+            'data-line': item.lineIndex + 1
+          });
+          if (item.indent >= 2) {
+            li.style.marginLeft = `${Math.min(4, Math.floor(item.indent / 2)) * 18}px`;
+          }
+          if (item.isTask) {
+            const checkbox = el('input', 'agy-task-checkbox', null, { type: 'checkbox' });
+            checkbox.checked = Boolean(item.checked);
+            checkbox.addEventListener('click', (ev) => ev.stopPropagation());
+            checkbox.addEventListener('change', () => {
+              if (callbacks && typeof callbacks.onToggleTaskItem === 'function') {
+                callbacks.onToggleTaskItem(item.lineIndex);
+              }
+            });
+            li.appendChild(checkbox);
+          }
+          const span = el('span');
+          appendInlineNodes(span, item.text, callbacks);
+          li.appendChild(span);
+          listEl.appendChild(li);
+        });
+        targetContainer.appendChild(listEl);
+        break;
+      }
+
+      case 'table': {
+        const wrap = el('div', 'agy-table-wrap');
+        const table = el('table', 'agy-table');
+        const thead = el('thead');
+        const trHead = el('tr');
+        block.headers.forEach((hText, colIdx) => {
+          const th = el('th', '', null, {
+            style: `text-align: ${block.alignments[colIdx] || 'left'}`
+          });
+          appendInlineNodes(th, hText, callbacks);
+          trHead.appendChild(th);
+        });
+        thead.appendChild(trHead);
+        table.appendChild(thead);
+
+        const tbody = el('tbody');
+        block.rows.forEach((rowCells, rIdx) => {
+          const tr = el('tr', '', null, {
+            'data-line': (block.startLine || 0) + 3 + rIdx
+          });
+          block.headers.forEach((_h, colIdx) => {
+            const td = el('td', '', null, {
+              style: `text-align: ${block.alignments[colIdx] || 'left'}`
+            });
+            appendInlineNodes(td, rowCells[colIdx] || '', callbacks);
+            tr.appendChild(td);
+          });
+          tbody.appendChild(tr);
+        });
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+        targetContainer.appendChild(wrap);
+        break;
+      }
+
+      case 'code': {
+        const card = el('div', 'agy-code-card');
+        const header = el('div', 'agy-code-header');
+        header.appendChild(el('span', 'agy-code-lang', block.lang || 'text'));
+
+        const copyBtn = el('button', 'agy-copy-btn', '复制代码 (Copy)');
+        copyBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          if (callbacks && typeof callbacks.onCopyText === 'function') {
+            callbacks.onCopyText(block.code);
+            copyBtn.textContent = '✓ 已复制';
+            setTimeout(() => {
+              copyBtn.textContent = '复制代码 (Copy)';
+            }, 1500);
+          }
+        });
+        header.appendChild(copyBtn);
+        card.appendChild(header);
+
+        const pre = el('pre', 'agy-code-pre');
+        const grid = el('div', 'agy-code-table');
+        const codeLines = block.code.split('\n');
+        const baseCodeLine = (block.codeStartLine !== undefined ? block.codeStartLine : (block.startLine || 0) + 1) + 1;
+        codeLines.forEach((lineText, idx) => {
+          const docLine = baseCodeLine + idx;
+          grid.appendChild(el('span', 'agy-line-num', String(idx + 1), { 'data-line': docLine }));
+          const codeLineSpan = el('span', 'agy-line-code', null, { 'data-line': docLine });
+          appendSyntaxHighlightedLine(codeLineSpan, lineText);
+          grid.appendChild(codeLineSpan);
+        });
+        pre.appendChild(grid);
+        card.appendChild(pre);
+        targetContainer.appendChild(card);
+        break;
+      }
+
+      case 'mermaid': {
+        const card = el('div', 'agy-mermaid-card');
+        const rendered = renderMermaidSvg(block.code);
+        const toolbar = el('div', 'agy-mermaid-toolbar');
+        toolbar.appendChild(
+          el('span', 'agy-mermaid-title', `◇ Mermaid · ${rendered.diagramType} (按住鼠标拖拽平移 / 滚轮缩放)`)
+        );
+
+        const controls = el('div', 'agy-mermaid-controls');
+        const zoomOutBtn = el('button', 'agy-mermaid-btn', '－');
+        const zoomResetBtn = el('button', 'agy-mermaid-btn', '100%');
+        const zoomInBtn = el('button', 'agy-mermaid-btn', '＋');
+        const toggleSrcBtn = el('button', 'agy-mermaid-btn', '源码 (DSL)');
+
+        controls.appendChild(zoomOutBtn);
+        controls.appendChild(zoomResetBtn);
+        controls.appendChild(zoomInBtn);
+        controls.appendChild(toggleSrcBtn);
+        toolbar.appendChild(controls);
+        card.appendChild(toolbar);
+
+        const viewport = el('div', 'agy-mermaid-viewport');
+        const stage = el('div', 'agy-mermaid-stage');
+        stage.appendChild(rendered.svg);
+        viewport.appendChild(stage);
+        card.appendChild(viewport);
+
+        const srcPre = el('pre', 'agy-mermaid-source', block.code);
+        card.appendChild(srcPre);
+
+        let scale = 1;
+        let panX = 0;
+        let panY = 0;
+        let isDragging = false;
+        let dragStartX = 0;
+        let dragStartY = 0;
+        let startPanX = 0;
+        let startPanY = 0;
+
+        const applyTransform = () => {
+          stage.style.transform = `translate(${Math.round(panX)}px, ${Math.round(panY)}px) scale(${scale})`;
+          zoomResetBtn.textContent = `${Math.round(scale * 100)}%`;
+        };
+
+        const updateScale = (nextScale) => {
+          scale = Math.min(3.0, Math.max(0.35, nextScale));
+          applyTransform();
+        };
+
+        zoomInBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          updateScale(scale + 0.15);
+        });
+        zoomOutBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          updateScale(scale - 0.15);
+        });
+        zoomResetBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          scale = 1;
+          panX = 0;
+          panY = 0;
+          applyTransform();
+        });
+        toggleSrcBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          srcPre.classList.toggle('visible');
+        });
+
+        // Interactive Mouse Drag Panning
+        viewport.addEventListener('mousedown', (ev) => {
+          if (ev.button !== 0) return;
+          ev.preventDefault();
+          ev.stopPropagation();
+          isDragging = true;
+          dragStartX = ev.clientX;
+          dragStartY = ev.clientY;
+          startPanX = panX;
+          startPanY = panY;
+          viewport.classList.add('is-dragging');
+          stage.classList.add('is-dragging');
+        });
+
+        if (typeof window !== 'undefined') {
+          window.addEventListener('mousemove', (ev) => {
+            if (!isDragging) return;
+            panX = startPanX + (ev.clientX - dragStartX);
+            panY = startPanY + (ev.clientY - dragStartY);
+            applyTransform();
+          });
+
+          window.addEventListener('mouseup', () => {
+            if (!isDragging) return;
+            isDragging = false;
+            viewport.classList.remove('is-dragging');
+            stage.classList.remove('is-dragging');
+          });
+        }
+
+        // Mouse Wheel Zoom inside Mermaid Viewport
+        viewport.addEventListener(
+          'wheel',
+          (ev) => {
+            ev.preventDefault();
+            ev.stopPropagation();
+            const delta = ev.deltaY < 0 ? 0.12 : -0.12;
+            updateScale(scale + delta);
+          },
+          { passive: false }
+        );
+
+        targetContainer.appendChild(card);
+        break;
+      }
+
+      case 'carousel': {
+        const slides = block.slides.length > 0 ? block.slides : ['(Empty Carousel)'];
+        let activeSlide = 0;
+
+        const card = el('div', 'agy-carousel');
+        const header = el('div', 'agy-carousel-header');
+        const label = el('span', 'agy-carousel-label', `Carousel · Slide 1 / ${slides.length}`);
+        header.appendChild(label);
+
+        const nav = el('div', 'agy-carousel-nav');
+        const prevBtn = el('button', 'agy-mermaid-btn', '◀ Prev');
+        const dotsWrap = el('div', 'agy-carousel-dots');
+        const nextBtn = el('button', 'agy-mermaid-btn', 'Next ▶');
+
+        const body = el('div', 'agy-carousel-body');
+
+        const renderSlide = (idx) => {
+          activeSlide = (idx + slides.length) % slides.length;
+          label.textContent = `Carousel · Slide ${activeSlide + 1} / ${slides.length}`;
+          body.replaceChildren();
+          const slideAst = parseMarkdownToAst(slides[activeSlide]);
+          slideAst.blocks.forEach((b) => renderSingleBlockContent(body, b, callbacks));
+
+          dotsWrap.replaceChildren();
+          slides.forEach((_s, dIdx) => {
+            const dot = el('button', `agy-carousel-dot${dIdx === activeSlide ? ' active' : ''}`);
+            dot.addEventListener('click', (ev) => {
+              ev.stopPropagation();
+              renderSlide(dIdx);
+            });
+            dotsWrap.appendChild(dot);
+          });
+        };
+
+        prevBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          renderSlide(activeSlide - 1);
+        });
+        nextBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          renderSlide(activeSlide + 1);
+        });
+
+        nav.appendChild(prevBtn);
+        nav.appendChild(dotsWrap);
+        nav.appendChild(nextBtn);
+        header.appendChild(nav);
+
+        card.appendChild(header);
+        card.appendChild(body);
+        renderSlide(0);
+        targetContainer.appendChild(card);
+        break;
+      }
+
+      case 'mathBlock': {
+        targetContainer.appendChild(renderMathDom(block.expression, true));
+        break;
+      }
+
+      default:
+        break;
+    }
+  }
+
+  /**
+   * Render an array of AST blocks into a container DOM element with in-preview live editing wrappers.
    * @param {HTMLElement} container
    * @param {Array<any>} blocks
    * @param {object} callbacks
    */
   function renderBlocksIntoDom(container, blocks, callbacks) {
-    let activeHeadingText = '';
-
     for (let i = 0; i < blocks.length; i++) {
       const block = blocks[i];
+      const startLine1 = (block.startLine || 0) + 1;
+      const endLine1 = (block.endLine !== undefined ? block.endLine : block.startLine || 0) + 1;
 
-      switch (block.type) {
-        case 'heading': {
-          activeHeadingText = block.text;
-          const wrap = el('div', 'agy-heading-wrap', null, { id: block.id });
-          const hTag = `h${Math.min(6, Math.max(1, block.level))}`;
-          const hNode = el(hTag, 'agy-heading');
-          appendInlineNodes(hNode, block.text, callbacks);
-          wrap.appendChild(hNode);
+      const wrapper = el('div', 'agy-editable-block', null, {
+        'data-start-line': startLine1,
+        'data-end-line': endLine1,
+        'data-block-index': i
+      });
 
-          const commentBtn = el('button', 'agy-comment-trigger', '+ 批注 (Review)', {
-            title: '对此章节添加 Antigravity Artifact 批注'
-          });
-          const capturedHeading = block.text;
-          commentBtn.addEventListener('click', () => {
-            if (callbacks && typeof callbacks.onOpenReviewModal === 'function') {
-              callbacks.onOpenReviewModal(capturedHeading, '');
+      // Hover Action Toolbar (Direct Edit + Send to Chat + Review)
+      const toolbar = el('div', 'agy-block-toolbar');
+      const editBtn = el('button', 'agy-block-btn', '✎ 直接编辑', {
+        title: '在预览界面直接编辑此块并实时渲染 (或直接点击文本段落)'
+      });
+      const chatBtn = el('button', 'agy-block-btn', `📌 引用 L${startLine1}-${endLine1}`, {
+        title: '将此段落文件与行号添加到 VS Code Copilot / Claude Code / Antigravity 聊天框'
+      });
+      const reviewBtn = el('button', 'agy-block-btn', '+ 批注');
+
+      toolbar.appendChild(editBtn);
+      toolbar.appendChild(chatBtn);
+      toolbar.appendChild(reviewBtn);
+      wrapper.appendChild(toolbar);
+
+      const contentBox = el('div', 'agy-block-content');
+      renderSingleBlockContent(contentBox, block, callbacks);
+      wrapper.appendChild(contentBox);
+
+      const startInPlaceEditing = () => {
+        if (wrapper.classList.contains('is-editing')) {
+          return;
+        }
+        wrapper.classList.add('is-editing');
+
+        const editorBox = el('div', 'agy-inline-editor-box');
+        const editorHeader = el('div', 'agy-inline-editor-header');
+        editorHeader.appendChild(
+          el('span', '', `实时编辑 (第 ${startLine1} - ${endLine1} 行 · 输入即实时渲染，按 Esc 或 Ctrl+Enter 完成)`)
+        );
+        const doneBtn = el('button', 'agy-block-btn', '✓ 完成');
+        editorHeader.appendChild(doneBtn);
+
+        const currentSlice =
+          callbacks && typeof callbacks.getBlockMarkdown === 'function'
+            ? callbacks.getBlockMarkdown(block.startLine, block.endLine)
+            : block.rawMarkdown || '';
+
+        const textarea = el('textarea', 'agy-inline-editor-input');
+        textarea.value = currentSlice;
+        const lineCount = Math.max(3, currentSlice.split('\n').length + 1);
+        textarea.rows = Math.min(18, lineCount);
+
+        editorBox.appendChild(editorHeader);
+        editorBox.appendChild(textarea);
+        wrapper.insertBefore(editorBox, contentBox);
+        textarea.focus();
+
+        let activeStart = block.startLine;
+        let activeEnd = block.endLine;
+
+        // Live render & sync on every keystroke!
+        textarea.addEventListener('input', () => {
+          const updatedMd = textarea.value;
+          contentBox.replaceChildren();
+          const liveAst = parseMarkdownToAst(updatedMd);
+          liveAst.blocks.forEach((b) => renderSingleBlockContent(contentBox, b, callbacks));
+
+          if (callbacks && typeof callbacks.onBlockLiveEdit === 'function') {
+            const newEnd = callbacks.onBlockLiveEdit(activeStart, activeEnd, updatedMd);
+            if (typeof newEnd === 'number') {
+              activeEnd = newEnd;
+              wrapper.setAttribute('data-end-line', String(activeEnd + 1));
             }
-          });
-          wrap.appendChild(commentBtn);
-          container.appendChild(wrap);
-          break;
+          }
+        });
+
+        const finishEditing = () => {
+          if (!wrapper.classList.contains('is-editing')) return;
+          wrapper.classList.remove('is-editing');
+          editorBox.remove();
+          if (callbacks && typeof callbacks.onBlockEditCommit === 'function') {
+            callbacks.onBlockEditCommit();
+          }
+        };
+
+        doneBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          finishEditing();
+        });
+
+        textarea.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Escape' || ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter')) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            finishEditing();
+          }
+        });
+      };
+
+      editBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        startInPlaceEditing();
+      });
+
+      chatBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        if (callbacks && typeof callbacks.onAddRangeToChat === 'function') {
+          callbacks.onAddRangeToChat(startLine1, endLine1, block.rawMarkdown || '');
         }
+      });
 
-        case 'paragraph': {
-          const p = el('p', 'agy-p');
-          appendInlineNodes(p, block.text, callbacks);
-          container.appendChild(p);
-          break;
+      reviewBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        if (callbacks && typeof callbacks.onOpenReviewModal === 'function') {
+          callbacks.onOpenReviewModal(
+            block.text || `${block.type} (L${startLine1}-L${endLine1})`,
+            block.rawMarkdown || '',
+            startLine1,
+            endLine1
+          );
         }
+      });
 
-        case 'hr': {
-          container.appendChild(el('hr', 'agy-hr'));
-          break;
+      // Click directly on text blocks (when not dragging a text selection) or double-click any block to edit in place!
+      wrapper.addEventListener('click', (ev) => {
+        if (wrapper.classList.contains('is-editing')) return;
+        const sel = typeof window !== 'undefined' && window.getSelection ? String(window.getSelection()).trim() : '';
+        if (sel.length > 0) return;
+        const targetTag = (ev.target && ev.target.tagName ? ev.target.tagName : '').toLowerCase();
+        if (targetTag === 'a' || targetTag === 'button' || targetTag === 'input' || targetTag === 'textarea') {
+          return;
         }
-
-        case 'alert': {
-          const typeLower = block.alertType.toLowerCase();
-          const iconMap = {
-            note: 'ℹ️',
-            tip: '💡',
-            important: '⚡',
-            warning: '⚠️',
-            caution: '🛑'
-          };
-          const alertCard = el('div', `agy-alert alert-${typeLower}`);
-          const header = el('div', 'agy-alert-header');
-          header.appendChild(el('span', '', iconMap[typeLower] || 'ℹ️'));
-          header.appendChild(el('span', '', block.alertType));
-          alertCard.appendChild(header);
-
-          const body = el('div', 'agy-alert-body');
-          const nestedAst = parseMarkdownToAst(block.body);
-          renderBlocksIntoDom(body, nestedAst.blocks, callbacks);
-          alertCard.appendChild(body);
-          container.appendChild(alertCard);
-          break;
+        if (
+          block.type === 'paragraph' ||
+          block.type === 'heading' ||
+          block.type === 'blockquote' ||
+          block.type === 'alert'
+        ) {
+          startInPlaceEditing();
         }
+      });
 
-        case 'blockquote': {
-          const bq = el('blockquote', 'agy-blockquote');
-          const nestedAst = parseMarkdownToAst(block.body);
-          renderBlocksIntoDom(bq, nestedAst.blocks, callbacks);
-          container.appendChild(bq);
-          break;
-        }
+      wrapper.addEventListener('dblclick', (ev) => {
+        if (wrapper.classList.contains('is-editing')) return;
+        ev.stopPropagation();
+        startInPlaceEditing();
+      });
 
-        case 'list': {
-          const listEl = el(block.ordered ? 'ol' : 'ul', 'agy-list');
-          block.items.forEach((item) => {
-            const li = el('li', item.isTask ? 'agy-task-item' : '');
-            if (item.indent >= 2) {
-              li.style.marginLeft = `${Math.min(4, Math.floor(item.indent / 2)) * 18}px`;
-            }
-            if (item.isTask) {
-              const checkbox = el('input', 'agy-task-checkbox', null, { type: 'checkbox' });
-              checkbox.checked = Boolean(item.checked);
-              checkbox.addEventListener('change', () => {
-                if (callbacks && typeof callbacks.onToggleTaskItem === 'function') {
-                  callbacks.onToggleTaskItem(item.lineIndex);
-                }
-              });
-              li.appendChild(checkbox);
-            }
-            const span = el('span');
-            appendInlineNodes(span, item.text, callbacks);
-            li.appendChild(span);
-            listEl.appendChild(li);
-          });
-          container.appendChild(listEl);
-          break;
-        }
-
-        case 'table': {
-          const wrap = el('div', 'agy-table-wrap');
-          const table = el('table', 'agy-table');
-          const thead = el('thead');
-          const trHead = el('tr');
-          block.headers.forEach((hText, colIdx) => {
-            const th = el('th', '', null, {
-              style: `text-align: ${block.alignments[colIdx] || 'left'}`
-            });
-            appendInlineNodes(th, hText, callbacks);
-            trHead.appendChild(th);
-          });
-          thead.appendChild(trHead);
-          table.appendChild(thead);
-
-          const tbody = el('tbody');
-          block.rows.forEach((rowCells) => {
-            const tr = el('tr');
-            block.headers.forEach((_h, colIdx) => {
-              const td = el('td', '', null, {
-                style: `text-align: ${block.alignments[colIdx] || 'left'}`
-              });
-              appendInlineNodes(td, rowCells[colIdx] || '', callbacks);
-              tr.appendChild(td);
-            });
-            tbody.appendChild(tr);
-          });
-          table.appendChild(tbody);
-          wrap.appendChild(table);
-          container.appendChild(wrap);
-          break;
-        }
-
-        case 'code': {
-          const card = el('div', 'agy-code-card');
-          const header = el('div', 'agy-code-header');
-          header.appendChild(el('span', 'agy-code-lang', block.lang || 'text'));
-
-          const copyBtn = el('button', 'agy-copy-btn', '复制代码 (Copy)');
-          copyBtn.addEventListener('click', () => {
-            if (callbacks && typeof callbacks.onCopyText === 'function') {
-              callbacks.onCopyText(block.code);
-              copyBtn.textContent = '✓ 已复制';
-              setTimeout(() => {
-                copyBtn.textContent = '复制代码 (Copy)';
-              }, 1500);
-            }
-          });
-          header.appendChild(copyBtn);
-          card.appendChild(header);
-
-          const pre = el('pre', 'agy-code-pre');
-          const grid = el('div', 'agy-code-table');
-          const codeLines = block.code.split('\n');
-          codeLines.forEach((lineText, idx) => {
-            grid.appendChild(el('span', 'agy-line-num', String(idx + 1)));
-            const codeLineSpan = el('span', 'agy-line-code');
-            appendSyntaxHighlightedLine(codeLineSpan, lineText);
-            grid.appendChild(codeLineSpan);
-          });
-          pre.appendChild(grid);
-          card.appendChild(pre);
-          container.appendChild(card);
-          break;
-        }
-
-        case 'mermaid': {
-          const card = el('div', 'agy-mermaid-card');
-          const rendered = renderMermaidSvg(block.code);
-          const toolbar = el('div', 'agy-mermaid-toolbar');
-          toolbar.appendChild(el('span', 'agy-mermaid-title', `◇ Mermaid · ${rendered.diagramType}`));
-
-          const controls = el('div', 'agy-mermaid-controls');
-          const zoomOutBtn = el('button', 'agy-mermaid-btn', '－');
-          const zoomResetBtn = el('button', 'agy-mermaid-btn', '100%');
-          const zoomInBtn = el('button', 'agy-mermaid-btn', '＋');
-          const toggleSrcBtn = el('button', 'agy-mermaid-btn', '源码 (DSL)');
-
-          controls.appendChild(zoomOutBtn);
-          controls.appendChild(zoomResetBtn);
-          controls.appendChild(zoomInBtn);
-          controls.appendChild(toggleSrcBtn);
-          toolbar.appendChild(controls);
-          card.appendChild(toolbar);
-
-          const viewport = el('div', 'agy-mermaid-viewport');
-          const stage = el('div', 'agy-mermaid-stage');
-          stage.appendChild(rendered.svg);
-          viewport.appendChild(stage);
-          card.appendChild(viewport);
-
-          const srcPre = el('pre', 'agy-mermaid-source', block.code);
-          card.appendChild(srcPre);
-
-          let scale = 1;
-          const updateScale = (nextScale) => {
-            scale = Math.min(2.5, Math.max(0.4, nextScale));
-            stage.style.transform = `scale(${scale})`;
-            zoomResetBtn.textContent = `${Math.round(scale * 100)}%`;
-          };
-
-          zoomInBtn.addEventListener('click', () => updateScale(scale + 0.15));
-          zoomOutBtn.addEventListener('click', () => updateScale(scale - 0.15));
-          zoomResetBtn.addEventListener('click', () => updateScale(1));
-          toggleSrcBtn.addEventListener('click', () => {
-            srcPre.classList.toggle('visible');
-          });
-
-          container.appendChild(card);
-          break;
-        }
-
-        case 'carousel': {
-          const slides = block.slides.length > 0 ? block.slides : ['(Empty Carousel)'];
-          let activeSlide = 0;
-
-          const card = el('div', 'agy-carousel');
-          const header = el('div', 'agy-carousel-header');
-          const label = el('span', 'agy-carousel-label', `Carousel · Slide 1 / ${slides.length}`);
-          header.appendChild(label);
-
-          const nav = el('div', 'agy-carousel-nav');
-          const prevBtn = el('button', 'agy-mermaid-btn', '◀ Prev');
-          const dotsWrap = el('div', 'agy-carousel-dots');
-          const nextBtn = el('button', 'agy-mermaid-btn', 'Next ▶');
-
-          const body = el('div', 'agy-carousel-body');
-
-          const renderSlide = (idx) => {
-            activeSlide = (idx + slides.length) % slides.length;
-            label.textContent = `Carousel · Slide ${activeSlide + 1} / ${slides.length}`;
-            body.replaceChildren();
-            const slideAst = parseMarkdownToAst(slides[activeSlide]);
-            renderBlocksIntoDom(body, slideAst.blocks, callbacks);
-
-            dotsWrap.replaceChildren();
-            slides.forEach((_s, dIdx) => {
-              const dot = el('button', `agy-carousel-dot${dIdx === activeSlide ? ' active' : ''}`);
-              dot.addEventListener('click', () => renderSlide(dIdx));
-              dotsWrap.appendChild(dot);
-            });
-          };
-
-          prevBtn.addEventListener('click', () => renderSlide(activeSlide - 1));
-          nextBtn.addEventListener('click', () => renderSlide(activeSlide + 1));
-
-          nav.appendChild(prevBtn);
-          nav.appendChild(dotsWrap);
-          nav.appendChild(nextBtn);
-          header.appendChild(nav);
-
-          card.appendChild(header);
-          card.appendChild(body);
-          renderSlide(0);
-          container.appendChild(card);
-          break;
-        }
-
-        case 'mathBlock': {
-          container.appendChild(renderMathDom(block.expression, true));
-          break;
-        }
-
-        default:
-          break;
-      }
+      container.appendChild(wrapper);
     }
   }
 
@@ -1906,7 +2680,7 @@
 
     const vscode = typeof acquireVsCodeApi === 'function' ? acquireVsCodeApi() : null;
 
-    let state = {
+    const state = {
       text: '',
       fileName: 'Document.md',
       filePath: '',
@@ -1915,9 +2689,12 @@
       isBrainArtifact: false,
       viewMode: 'preview',
       showOutline: true,
+      aiCompanionEnabled: false,
       initializedConfig: false,
       reviewHeading: '',
-      reviewQuote: ''
+      reviewQuote: '',
+      reviewStartLine: 1,
+      reviewEndLine: 1
     };
 
     // Build Top Header Bar
@@ -1932,18 +2709,24 @@
     topLeft.appendChild(dirtyDot);
 
     const topCenter = el('div', 'agy-topbar-center');
-    const btnPreview = el('button', 'agy-mode-btn active', '预览 (Preview)');
-    const btnSplit = el('button', 'agy-mode-btn', '分栏编辑 (Split)');
-    const btnSource = el('button', 'agy-mode-btn', '源码 (Source)');
+    const btnPreview = el('button', 'agy-mode-btn active', '预览·直编 (Live Preview)');
+    const btnSplit = el('button', 'agy-mode-btn', '分栏源码 (Split)');
+    const btnSource = el('button', 'agy-mode-btn', '纯源码 (Source)');
     topCenter.appendChild(btnPreview);
     topCenter.appendChild(btnSplit);
     topCenter.appendChild(btnSource);
 
     const topRight = el('div', 'agy-topbar-right');
+    const btnAiLink = el('button', 'agy-action-btn', '🎯 AI 选区联动');
+    btnAiLink.setAttribute(
+      'title',
+      '开启后，在预览界面选中文本将自动联动 VS Code 源码编辑器选区，让 VS Code Copilot Chat 和 Claude Code 实时显示文件名与行号'
+    );
     const btnOutline = el('button', 'agy-action-btn', '☰ 目录大纲');
     const btnNative = el('button', 'agy-action-btn primary', '✦ 原生内置视图 (jetski)');
     btnNative.setAttribute('title', '调用 Antigravity IDE 原生内置 antigravity.artifactEditor 打开当前文档');
-    const btnTextEditor = el('button', 'agy-action-btn', '⟨/⟩ 默认编辑器');
+    const btnTextEditor = el('button', 'agy-action-btn', '⟨/⟩ 文本编辑器');
+    topRight.appendChild(btnAiLink);
     topRight.appendChild(btnOutline);
     topRight.appendChild(btnNative);
     topRight.appendChild(btnTextEditor);
@@ -1958,7 +2741,7 @@
     // Outline Sidebar
     const outlineAside = el('aside', 'agy-outline');
     const outlineHeader = el('div', 'agy-outline-header');
-    outlineHeader.appendChild(el('span', '', '和大纲导航 (Outline)'));
+    outlineHeader.appendChild(el('span', '', '大纲导航 (Outline)'));
     const outlineCount = el('span', '', '0');
     outlineHeader.appendChild(outlineCount);
     const outlineList = el('div', 'agy-outline-list');
@@ -1981,6 +2764,13 @@
     workspace.appendChild(editorPane);
     workspace.appendChild(previewPane);
 
+    // Floating Selection AI Action Pill
+    const selectionBar = el('div', 'agy-selection-bar hidden');
+    const selChatBtn = el('button', 'agy-selection-pill-btn', '📌 发送到 AI 聊天 (Ctrl+L)');
+    const selReviewBtn = el('button', 'agy-selection-pill-btn secondary', '+ 批注');
+    selectionBar.appendChild(selChatBtn);
+    selectionBar.appendChild(selReviewBtn);
+
     // Floating Review Modal
     const reviewModal = el('div', 'agy-review-modal hidden');
     const reviewHeader = el('div', 'agy-review-header');
@@ -1993,16 +2783,15 @@
       placeholder: '输入针对该章节的修改意见或批注...'
     });
     const reviewActions = el('div', 'agy-review-actions');
-    const reviewSubmitBtn = el('button', 'agy-action-btn primary', '生成并复制批注');
+    const reviewSubmitBtn = el('button', 'agy-action-btn primary', '发送至聊天框并复制');
     reviewActions.appendChild(reviewSubmitBtn);
     reviewModal.appendChild(reviewHeader);
     reviewModal.appendChild(reviewQuoteBox);
     reviewModal.appendChild(reviewInput);
     reviewModal.appendChild(reviewActions);
 
-    root.replaceChildren(topbar, workspace, reviewModal);
+    root.replaceChildren(topbar, workspace, selectionBar, reviewModal);
 
-    // Mode Switching
     function applyViewMode(mode) {
       state.viewMode = mode;
       btnPreview.classList.toggle('active', mode === 'preview');
@@ -2023,6 +2812,18 @@
     btnSource.addEventListener('click', () => applyViewMode('source'));
     btnOutline.addEventListener('click', () => applyOutlineVisibility(!state.showOutline));
 
+    btnAiLink.addEventListener('click', () => {
+      if (vscode) {
+        const currentRange = resolveDomSelectionLineRange();
+        vscode.postMessage({
+          type: 'toggleAiCompanion',
+          startLineNumber: currentRange.startLineNumber,
+          endLineNumber: currentRange.endLineNumber,
+          selectedText: currentRange.selectedText
+        });
+      }
+    });
+
     btnNative.addEventListener('click', () => {
       if (vscode) {
         vscode.postMessage({ type: 'openNative' });
@@ -2040,57 +2841,156 @@
     });
 
     /**
-     * Resolve 1-based [startLineNumber, endLineNumber] in state.text for a snippet or textarea selection.
-     * @param {string} snippet
-     * @returns {{ startLineNumber: number, endLineNumber: number }}
+     * Accurately resolve 1-based [startLineNumber, endLineNumber] from DOM selection or textarea selection.
+     * @returns {{ startLineNumber: number, endLineNumber: number, selectedText: string }}
      */
-    function findLineRangeForSnippet(snippet) {
+    function resolveDomSelectionLineRange() {
       if (document.activeElement === sourceTextarea) {
         const startOffset = sourceTextarea.selectionStart || 0;
         const endOffset = Math.max(startOffset, sourceTextarea.selectionEnd || startOffset);
         const startLineNumber = state.text.slice(0, startOffset).split('\n').length;
         const endLineNumber = state.text.slice(0, endOffset).split('\n').length;
-        return { startLineNumber, endLineNumber };
+        return {
+          startLineNumber,
+          endLineNumber,
+          selectedText: sourceTextarea.value.slice(startOffset, endOffset)
+        };
       }
 
-      const clean = String(snippet || '').trim();
-      if (!clean) {
-        return { startLineNumber: 1, endLineNumber: 1 };
-      }
+      const sel = window.getSelection ? window.getSelection() : null;
+      const selectedText = sel ? String(sel).trim() : '';
 
-      const idx = state.text.indexOf(clean);
-      if (idx !== -1) {
-        const startLineNumber = state.text.slice(0, idx).split('\n').length;
-        const endLineNumber = startLineNumber + clean.split('\n').length - 1;
-        return { startLineNumber, endLineNumber };
-      }
-
-      const firstLine = clean.split('\n')[0].trim();
-      if (firstLine) {
-        const lines = state.text.split('\n');
-        for (let i = 0; i < lines.length; i++) {
-          if (lines[i].includes(firstLine)) {
-            const span = Math.max(1, clean.split('\n').length);
-            return {
-              startLineNumber: i + 1,
-              endLineNumber: Math.min(lines.length, i + span)
-            };
+      const findClosestLineAttr = (node) => {
+        let cur = node && node.nodeType === 3 ? node.parentElement : node;
+        while (cur && cur !== docContainer) {
+          if (cur.getAttribute) {
+            const exactLine = cur.getAttribute('data-line');
+            if (exactLine) {
+              const n = parseInt(exactLine, 10);
+              return { start: n, end: n };
+            }
+            const bStart = cur.getAttribute('data-start-line');
+            const bEnd = cur.getAttribute('data-end-line');
+            if (bStart) {
+              return {
+                start: parseInt(bStart, 10),
+                end: bEnd ? parseInt(bEnd, 10) : parseInt(bStart, 10)
+              };
+            }
           }
+          cur = cur.parentElement;
+        }
+        return null;
+      };
+
+      if (sel && sel.rangeCount > 0) {
+        const anchorInfo = findClosestLineAttr(sel.anchorNode);
+        const focusInfo = findClosestLineAttr(sel.focusNode);
+        if (anchorInfo || focusInfo) {
+          const aStart = anchorInfo ? anchorInfo.start : focusInfo.start;
+          const aEnd = anchorInfo ? anchorInfo.end : focusInfo.end;
+          const fStart = focusInfo ? focusInfo.start : aStart;
+          const fEnd = focusInfo ? focusInfo.end : aEnd;
+          let startLineNumber = Math.min(aStart, fStart);
+          let endLineNumber = Math.max(aEnd, fEnd);
+
+          // Refine within block if selectedText matches a specific sub-range of lines
+          if (selectedText) {
+            const docLines = state.text.split('\n');
+            const blockSlice = docLines.slice(Math.max(0, startLineNumber - 1), endLineNumber).join('\n');
+            const subIdx = blockSlice.indexOf(selectedText);
+            if (subIdx !== -1) {
+              const offsetLines = blockSlice.slice(0, subIdx).split('\n').length - 1;
+              const spanLines = selectedText.split('\n').length;
+              startLineNumber = startLineNumber + offsetLines;
+              endLineNumber = startLineNumber + spanLines - 1;
+            }
+          }
+
+          return { startLineNumber, endLineNumber, selectedText };
         }
       }
 
-      return { startLineNumber: 1, endLineNumber: 1 };
+      if (selectedText) {
+        const idx = state.text.indexOf(selectedText);
+        if (idx !== -1) {
+          const startLineNumber = state.text.slice(0, idx).split('\n').length;
+          const endLineNumber = startLineNumber + selectedText.split('\n').length - 1;
+          return { startLineNumber, endLineNumber, selectedText };
+        }
+      }
+
+      return { startLineNumber: 1, endLineNumber: 1, selectedText };
     }
+
+    let lastSelectionRange = { startLineNumber: 1, endLineNumber: 1, selectedText: '' };
+
+    // Detect text selection in Preview to show Floating AI Action Pill & sync with Host Editor
+    document.addEventListener('mouseup', (ev) => {
+      if (selectionBar.contains(ev.target)) {
+        return;
+      }
+      setTimeout(() => {
+        const sel = window.getSelection ? window.getSelection() : null;
+        const selText = sel ? String(sel).trim() : '';
+        if (!selText || (document.activeElement && document.activeElement.tagName === 'TEXTAREA')) {
+          selectionBar.classList.add('hidden');
+          return;
+        }
+
+        const info = resolveDomSelectionLineRange();
+        lastSelectionRange = info;
+        selChatBtn.textContent = `📌 发送到 AI 聊天 (L${info.startLineNumber}-${info.endLineNumber} · Ctrl+L)`;
+
+        const x = Math.min(window.innerWidth - 320, Math.max(16, ev.clientX - 80));
+        const y = Math.max(52, ev.clientY - 46);
+        selectionBar.style.left = `${x}px`;
+        selectionBar.style.top = `${y}px`;
+        selectionBar.classList.remove('hidden');
+
+        if (vscode) {
+          vscode.postMessage({
+            type: 'selectionChanged',
+            startLineNumber: info.startLineNumber,
+            endLineNumber: info.endLineNumber,
+            selectedText: info.selectedText
+          });
+        }
+      }, 20);
+    });
+
+    selChatBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (vscode) {
+        vscode.postMessage({
+          type: 'addSelectionToChat',
+          startLineNumber: lastSelectionRange.startLineNumber,
+          endLineNumber: lastSelectionRange.endLineNumber,
+          selectedText: lastSelectionRange.selectedText
+        });
+      }
+      selectionBar.classList.add('hidden');
+    });
+
+    selReviewBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      selectionBar.classList.add('hidden');
+      callbacks.onOpenReviewModal(
+        `第 ${lastSelectionRange.startLineNumber}-${lastSelectionRange.endLineNumber} 行`,
+        lastSelectionRange.selectedText,
+        lastSelectionRange.startLineNumber,
+        lastSelectionRange.endLineNumber
+      );
+    });
 
     reviewSubmitBtn.addEventListener('click', () => {
       if (vscode && reviewInput.value.trim()) {
-        const range = findLineRangeForSnippet(state.reviewQuote || state.reviewHeading);
         vscode.postMessage({
           type: 'submitReviewComment',
           heading: state.reviewHeading,
           selectedText: state.reviewQuote,
-          startLineNumber: range.startLineNumber,
-          endLineNumber: range.endLineNumber,
+          startLineNumber: state.reviewStartLine,
+          endLineNumber: state.reviewEndLine,
           comment: reviewInput.value.trim()
         });
         reviewInput.value = '';
@@ -2100,36 +3000,46 @@
 
     // Live editing in Split / Source mode
     let editTimer = null;
-    sourceTextarea.addEventListener('input', () => {
-      state.text = sourceTextarea.value;
-      renderDocument();
+    function pushTextEditToExtension(newText) {
+      state.text = newText;
+      if (document.activeElement !== sourceTextarea) {
+        sourceTextarea.value = newText;
+      }
       if (editTimer) {
         clearTimeout(editTimer);
       }
       editTimer = setTimeout(() => {
         if (vscode) {
-          vscode.postMessage({ type: 'edit', text: sourceTextarea.value });
+          vscode.postMessage({ type: 'edit', text: state.text });
         }
-      }, 160);
+      }, 120);
+    }
+
+    sourceTextarea.addEventListener('input', () => {
+      state.text = sourceTextarea.value;
+      renderDocument();
+      pushTextEditToExtension(sourceTextarea.value);
     });
 
-    // Support Ctrl+S / Cmd+S to save and Ctrl+L / Cmd+L to send selection to Antigravity Chat
+    // Keyboard shortcuts: Ctrl+S (save), Ctrl+L or Alt+K (send selection to Copilot / Claude / Antigravity Chat)
     window.addEventListener('keydown', (ev) => {
       if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 's') {
         ev.preventDefault();
         if (vscode) {
           vscode.postMessage({ type: 'save' });
         }
-      } else if ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'l') {
+      } else if (
+        ((ev.ctrlKey || ev.metaKey) && ev.key.toLowerCase() === 'l') ||
+        (ev.altKey && ev.key.toLowerCase() === 'k')
+      ) {
         ev.preventDefault();
         if (vscode) {
-          const sel = window.getSelection ? String(window.getSelection()).trim() : '';
-          const range = findLineRangeForSnippet(sel);
+          const info = resolveDomSelectionLineRange();
           vscode.postMessage({
             type: 'addSelectionToChat',
-            startLineNumber: range.startLineNumber,
-            endLineNumber: range.endLineNumber,
-            selectedText: sel
+            startLineNumber: info.startLineNumber,
+            endLineNumber: info.endLineNumber,
+            selectedText: info.selectedText
           });
         }
       }
@@ -2138,6 +3048,30 @@
     const callbacks = {
       get baseWebviewUri() {
         return state.baseWebviewUri;
+      },
+      getBlockMarkdown(startLine, endLine) {
+        const lines = state.text.replace(/\r\n/g, '\n').split('\n');
+        return lines.slice(startLine, endLine + 1).join('\n');
+      },
+      onBlockLiveEdit(startLine, endLine, newBlockMarkdown) {
+        const lines = state.text.replace(/\r\n/g, '\n').split('\n');
+        const replacementLines = newBlockMarkdown.replace(/\r\n/g, '\n').split('\n');
+        lines.splice(startLine, endLine - startLine + 1, ...replacementLines);
+        pushTextEditToExtension(lines.join('\n'));
+        return startLine + replacementLines.length - 1;
+      },
+      onBlockEditCommit() {
+        renderDocument();
+      },
+      onAddRangeToChat(startLineNumber, endLineNumber, snippetText) {
+        if (vscode) {
+          vscode.postMessage({
+            type: 'addSelectionToChat',
+            startLineNumber,
+            endLineNumber,
+            selectedText: snippetText
+          });
+        }
       },
       onOpenFileLink(href) {
         if (vscode) {
@@ -2159,11 +3093,12 @@
           vscode.postMessage({ type: 'copyText', text });
         }
       },
-      onOpenReviewModal(headingText, quoteText) {
+      onOpenReviewModal(headingText, quoteText, startLineNumber, endLineNumber) {
         state.reviewHeading = headingText;
-        const sel = window.getSelection ? String(window.getSelection()).trim() : '';
-        state.reviewQuote = quoteText || sel || headingText;
-        reviewTitle.textContent = `批注: ${headingText}`;
+        state.reviewQuote = quoteText || headingText;
+        state.reviewStartLine = startLineNumber || 1;
+        state.reviewEndLine = endLineNumber || state.reviewStartLine;
+        reviewTitle.textContent = `批注: ${headingText} (L${state.reviewStartLine}-L${state.reviewEndLine})`;
         reviewQuoteBox.textContent = state.reviewQuote;
         reviewModal.classList.remove('hidden');
         reviewInput.focus();
@@ -2209,11 +3144,48 @@
       }
 
       renderBlocksIntoDom(docContainer, ast.blocks, callbacks);
+
+      // Append New Block Area at bottom of Preview for seamless continuation
+      const appendBox = el(
+        'div',
+        'agy-append-area',
+        '+ 点击此处直接在预览界面底部追加 Markdown 内容（支持实时渲染公式、Mermaid 与段落）...'
+      );
+      appendBox.addEventListener('click', () => {
+        const totalLines = state.text ? state.text.split('\n').length : 0;
+        const nextText = state.text ? `${state.text.replace(/\s+$/, '')}\n\n新段落内容...` : '新段落内容...';
+        pushTextEditToExtension(nextText);
+        renderDocument();
+        const editableBlocks = docContainer.querySelectorAll('.agy-editable-block');
+        if (editableBlocks.length > 0) {
+          const lastBlock = editableBlocks[editableBlocks.length - 1];
+          const editBtn = lastBlock.querySelector('.agy-block-btn');
+          if (editBtn) editBtn.click();
+        }
+      });
+      docContainer.appendChild(appendBox);
     }
 
     window.addEventListener('message', (event) => {
       const msg = event.data;
-      if (!msg || msg.type !== 'documentUpdate') {
+      if (!msg) return;
+
+      if (msg.type === 'aiCompanionState') {
+        state.aiCompanionEnabled = Boolean(msg.enabled);
+        btnAiLink.classList.toggle('primary', state.aiCompanionEnabled);
+        btnAiLink.textContent = state.aiCompanionEnabled ? '🎯 AI 联动已开启' : '🎯 AI 选区联动';
+        return;
+      }
+
+      if (msg.type !== 'documentUpdate') {
+        return;
+      }
+
+      // Avoid overwriting an active inline block editor while the user is typing in it
+      const activeInlineEditor = document.querySelector('.agy-editable-block.is-editing');
+      if (activeInlineEditor && msg.text === state.text) {
+        state.isDirty = Boolean(msg.isDirty);
+        dirtyDot.style.display = state.isDirty ? 'inline-block' : 'none';
         return;
       }
 
@@ -2234,7 +3206,9 @@
         sourceTextarea.value = state.text;
       }
 
-      renderDocument();
+      if (!activeInlineEditor) {
+        renderDocument();
+      }
     });
 
     if (vscode) {
@@ -2251,9 +3225,9 @@
       parseMarkdownToAst,
       renderMermaidSvg,
       renderMathDom,
+      readLatexArgument,
       appendInlineNodes,
       renderBlocksIntoDom
     };
   }
 })();
-
