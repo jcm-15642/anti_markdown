@@ -3223,52 +3223,127 @@
       showOutline: true,
       aiCompanionEnabled: false,
       initializedConfig: false,
-      diff: null
+      diff: null,
+      previewAiPlatforms: ['vscode', 'antigravity', 'claude', 'codex'],
+      otherFilesCapsuleEnabled: true,
+      otherFilesAiPlatforms: ['vscode', 'antigravity', 'claude', 'codex']
     };
 
-    // Build Top Header Bar (only AI platform toggles + outline toggle)
+    // Build Top Header Bar (Preview AI platforms + Other Files Capsule switch & platforms + outline toggle)
     const topbar = el('header', 'agy-topbar');
     const dirtyDot = el('span', 'agy-dirty-dot', null, { title: '有未保存的更改 (Ctrl+S 保存)' });
     dirtyDot.style.display = 'none';
 
     const topRight = el('div', 'agy-topbar-right');
 
-    // AI platform toggles (top menu): choose which platforms appear in the floating capsule
     const AI_PLATFORMS = [
       { id: 'vscode', icon: '💬', label: 'VS Code' },
       { id: 'antigravity', icon: '✦', label: 'Antigravity' },
       { id: 'claude', icon: '✴', label: 'Claude Code' },
       { id: 'codex', icon: '◎', label: 'Codex' }
     ];
-    state.enabledAiPlatforms = AI_PLATFORMS.map((p) => p.id);
-    const aiPlatformGroup = el('div', 'agy-ai-platform-group', null, {
-      title: '选择启用的 AI 平台（选中文本后，悬浮胶囊中仅显示已启用的平台）'
+    state.enabledAiPlatforms = state.previewAiPlatforms.slice();
+
+    // 1. Preview AI platforms group
+    const previewPlatformGroup = el('div', 'agy-ai-platform-group', null, {
+      title: '选择在当前 Markdown 预览视图选中文本时启用的 AI 平台'
     });
-    aiPlatformGroup.appendChild(el('span', 'agy-ai-platform-label', 'AI 平台'));
-    const aiPlatformButtons = {};
+    previewPlatformGroup.appendChild(el('span', 'agy-ai-platform-label', '预览划词:'));
+    const previewPlatformButtons = {};
     AI_PLATFORMS.forEach((p) => {
       const b = el('button', 'agy-ai-platform-btn active', p.label, { 'data-platform': p.id });
       b.addEventListener('click', (ev) => {
         ev.stopPropagation();
-        const set = new Set(state.enabledAiPlatforms);
+        const set = new Set(state.previewAiPlatforms);
         if (set.has(p.id)) {
           set.delete(p.id);
         } else {
           set.add(p.id);
         }
-        state.enabledAiPlatforms = AI_PLATFORMS.map((x) => x.id).filter((id) => set.has(id));
+        state.previewAiPlatforms = AI_PLATFORMS.map((x) => x.id).filter((id) => set.has(id));
+        state.enabledAiPlatforms = state.previewAiPlatforms.slice();
         refreshAiPlatformUi();
         if (vscode) {
-          vscode.postMessage({ type: 'updateAiPlatforms', platforms: state.enabledAiPlatforms });
+          vscode.postMessage({
+            type: 'updatePreviewAiPlatforms',
+            platforms: state.previewAiPlatforms
+          });
         }
       });
-      aiPlatformButtons[p.id] = b;
-      aiPlatformGroup.appendChild(b);
+      previewPlatformButtons[p.id] = b;
+      previewPlatformGroup.appendChild(b);
     });
+
+    // Divider 1
+    const divider1 = el('div', 'agy-topbar-divider');
+
+    // 2. Other regular code files Selection Capsule & Platforms group
+    const otherFilesGroup = el('div', 'agy-other-files-group', null, {
+      title: '配置普通代码等文件中选中文本时的浮动胶囊（完全独立于预览窗口）'
+    });
+
+    const toggleOtherFilesBtn = el('button', 'agy-toggle-capsule-btn is-active', null, {
+      title: '开启/关闭其他普通代码文件中的选中文本浮动胶囊'
+    });
+    const toggleDot = el('span', 'agy-toggle-dot');
+    const toggleText = el('span', 'agy-toggle-text', '代码划词: 开');
+    toggleOtherFilesBtn.appendChild(toggleDot);
+    toggleOtherFilesBtn.appendChild(toggleText);
+
+    toggleOtherFilesBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      state.otherFilesCapsuleEnabled = !state.otherFilesCapsuleEnabled;
+      refreshAiPlatformUi();
+      if (vscode) {
+        vscode.postMessage({
+          type: 'updateOtherFilesCapsule',
+          enabled: state.otherFilesCapsuleEnabled,
+          platforms: state.otherFilesAiPlatforms
+        });
+      }
+    });
+
+    const otherFilesPlatformGroup = el('div', 'agy-ai-platform-group', null, {
+      title: '选择在其他代码文件中选中文本时，悬浮胶囊展示的 AI 平台'
+    });
+    otherFilesPlatformGroup.appendChild(el('span', 'agy-ai-platform-label', '代码平台:'));
+    const otherFilesPlatformButtons = {};
+    AI_PLATFORMS.forEach((p) => {
+      const b = el('button', 'agy-ai-platform-btn active', p.label, { 'data-platform': p.id });
+      b.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const set = new Set(state.otherFilesAiPlatforms);
+        if (set.has(p.id)) {
+          set.delete(p.id);
+        } else {
+          set.add(p.id);
+        }
+        state.otherFilesAiPlatforms = AI_PLATFORMS.map((x) => x.id).filter((id) => set.has(id));
+        refreshAiPlatformUi();
+        if (vscode) {
+          vscode.postMessage({
+            type: 'updateOtherFilesCapsule',
+            enabled: state.otherFilesCapsuleEnabled,
+            platforms: state.otherFilesAiPlatforms
+          });
+        }
+      });
+      otherFilesPlatformButtons[p.id] = b;
+      otherFilesPlatformGroup.appendChild(b);
+    });
+
+    otherFilesGroup.appendChild(toggleOtherFilesBtn);
+    otherFilesGroup.appendChild(otherFilesPlatformGroup);
+
+    // Divider 2
+    const divider2 = el('div', 'agy-topbar-divider');
 
     const btnOutline = el('button', 'agy-action-btn', '☰ 目录大纲');
     topRight.appendChild(dirtyDot);
-    topRight.appendChild(aiPlatformGroup);
+    topRight.appendChild(previewPlatformGroup);
+    topRight.appendChild(divider1);
+    topRight.appendChild(otherFilesGroup);
+    topRight.appendChild(divider2);
     topRight.appendChild(btnOutline);
 
     topbar.appendChild(topRight);
@@ -3347,12 +3422,17 @@
     }
 
     function refreshAiPlatformUi() {
-      const enabled = new Set(state.enabledAiPlatforms);
+      // 1. Preview platforms
+      const previewSet = new Set(state.previewAiPlatforms || []);
       AI_PLATFORMS.forEach((p) => {
-        aiPlatformButtons[p.id].classList.toggle('active', enabled.has(p.id));
+        if (previewPlatformButtons[p.id]) {
+          previewPlatformButtons[p.id].classList.toggle('active', previewSet.has(p.id));
+        }
       });
+
+      // 2. Floating selection capsule in preview window
       selPlatformWrap.replaceChildren();
-      AI_PLATFORMS.filter((p) => enabled.has(p.id)).forEach((p) => {
+      AI_PLATFORMS.filter((p) => previewSet.has(p.id)).forEach((p) => {
         const b = el('button', 'agy-selection-pill-btn', `${p.icon} ${p.label}`, {
           title: `仅发送到 ${p.label} 聊天框`
         });
@@ -3365,9 +3445,22 @@
         });
         selPlatformWrap.appendChild(b);
       });
-      if (enabled.size === 0) {
-        selPlatformWrap.appendChild(el('span', 'agy-ai-platform-label', '未启用 AI 平台（顶部菜单开启）'));
+      if (previewSet.size === 0) {
+        selPlatformWrap.appendChild(el('span', 'agy-ai-platform-label', '未启用预览平台（顶部开启）'));
       }
+
+      // 3. Other files toggle button and platform buttons
+      const isOtherEnabled = Boolean(state.otherFilesCapsuleEnabled);
+      toggleOtherFilesBtn.classList.toggle('is-active', isOtherEnabled);
+      toggleText.textContent = isOtherEnabled ? '代码划词: 开' : '代码划词: 关';
+      otherFilesGroup.classList.toggle('is-disabled', !isOtherEnabled);
+
+      const otherSet = new Set(state.otherFilesAiPlatforms || []);
+      AI_PLATFORMS.forEach((p) => {
+        if (otherFilesPlatformButtons[p.id]) {
+          otherFilesPlatformButtons[p.id].classList.toggle('active', otherSet.has(p.id));
+        }
+      });
     }
     refreshAiPlatformUi();
 
@@ -3575,7 +3668,7 @@
         if (vscode) {
           const info = resolveDomSelectionLineRange();
           // Ctrl+L sends to the first enabled platform (current preferred platform)
-          const preferred = state.enabledAiPlatforms[0] || '';
+          const preferred = (state.previewAiPlatforms && state.previewAiPlatforms[0]) || '';
           sendRangeToPlatform(preferred, info);
         }
       }
@@ -3626,7 +3719,7 @@
         }
       },
       onAddRangeToChat(startLineNumber, endLineNumber, snippetText) {
-        const preferred = state.enabledAiPlatforms[0] || '';
+        const preferred = (state.previewAiPlatforms && state.previewAiPlatforms[0]) || '';
         sendRangeToPlatform(preferred, { startLineNumber, endLineNumber, selectedText: snippetText });
       },
       onOpenFileLink(href) {
@@ -3705,10 +3798,29 @@
         return;
       }
 
-      if (msg.config && Array.isArray(msg.config.enabledAiPlatforms)) {
-        state.enabledAiPlatforms = AI_PLATFORMS.map((p) => p.id).filter((id) =>
-          msg.config.enabledAiPlatforms.includes(id)
-        );
+      if (msg.config) {
+        if (Array.isArray(msg.config.previewAiPlatforms)) {
+          state.previewAiPlatforms = AI_PLATFORMS.map((p) => p.id).filter((id) =>
+            msg.config.previewAiPlatforms.includes(id)
+          );
+          state.enabledAiPlatforms = state.previewAiPlatforms.slice();
+        } else if (Array.isArray(msg.config.enabledAiPlatforms)) {
+          state.previewAiPlatforms = AI_PLATFORMS.map((p) => p.id).filter((id) =>
+            msg.config.enabledAiPlatforms.includes(id)
+          );
+          state.enabledAiPlatforms = state.previewAiPlatforms.slice();
+        }
+
+        if (typeof msg.config.otherFilesCapsuleEnabled === 'boolean') {
+          state.otherFilesCapsuleEnabled = msg.config.otherFilesCapsuleEnabled;
+        }
+
+        if (Array.isArray(msg.config.otherFilesAiPlatforms)) {
+          state.otherFilesAiPlatforms = AI_PLATFORMS.map((p) => p.id).filter((id) =>
+            msg.config.otherFilesAiPlatforms.includes(id)
+          );
+        }
+
         refreshAiPlatformUi();
       }
 

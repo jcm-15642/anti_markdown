@@ -619,13 +619,10 @@ function createDocumentPayload(document, webview, isSidePreview) {
     lastModified = new Date().toISOString();
   }
 
-  const rawPlatforms = config.get('enabledAiPlatforms', ['vscode', 'antigravity', 'claude', 'codex']);
-  const enabledAiPlatforms =
-    Array.isArray(rawPlatforms) && rawPlatforms.length > 0
-      ? rawPlatforms
-      : ['vscode', 'antigravity', 'claude', 'codex'];
-
   const diff = computeDocumentDiff(document);
+  const previewAiPlatforms = getPreviewAiPlatforms();
+  const otherFilesCapsuleEnabled = getOtherFilesCapsuleEnabled();
+  const otherFilesAiPlatforms = getOtherFilesAiPlatforms();
 
   return {
     type: 'documentUpdate',
@@ -641,7 +638,10 @@ function createDocumentPayload(document, webview, isSidePreview) {
     diff,
     config: {
       showOutline: config.get('showOutline', true),
-      enabledAiPlatforms
+      previewAiPlatforms,
+      otherFilesCapsuleEnabled,
+      otherFilesAiPlatforms,
+      enabledAiPlatforms: previewAiPlatforms
     }
   };
 }
@@ -657,15 +657,157 @@ const AI_PLATFORM_META = {
 };
 
 /**
- * Read enabled AI platforms from configuration.
+ * Check if the floating selection capsule is enabled for other regular code files.
+ * @returns {boolean}
+ */
+function getOtherFilesCapsuleEnabled() {
+  if (!vscode) return true;
+  const cfg = vscode.workspace.getConfiguration('antiMarkdown');
+  const val = cfg.get('otherFilesCapsuleEnabled');
+  if (typeof val === 'boolean') {
+    return val;
+  }
+  return cfg.get('selectionHoverCapsule', true) !== false;
+}
+
+/**
+ * Read enabled AI platforms for other regular code files (independent from preview window).
+ * @returns {string[]}
+ */
+function getOtherFilesAiPlatforms() {
+  if (!vscode) return AI_PLATFORM_IDS.slice();
+  const cfg = vscode.workspace.getConfiguration('antiMarkdown');
+  const raw = cfg.get('otherFilesAiPlatforms');
+  if (Array.isArray(raw) && raw.length > 0) {
+    return AI_PLATFORM_IDS.filter((id) => raw.includes(id));
+  }
+  const fallback = cfg.get('enabledAiPlatforms', AI_PLATFORM_IDS);
+  if (Array.isArray(fallback) && fallback.length > 0) {
+    return AI_PLATFORM_IDS.filter((id) => fallback.includes(id));
+  }
+  return AI_PLATFORM_IDS.slice();
+}
+
+/**
+ * Read enabled AI platforms for Markdown Preview window selections (independent from other files).
+ * @returns {string[]}
+ */
+function getPreviewAiPlatforms() {
+  if (!vscode) return AI_PLATFORM_IDS.slice();
+  const cfg = vscode.workspace.getConfiguration('antiMarkdown');
+  const raw = cfg.get('previewAiPlatforms');
+  if (Array.isArray(raw) && raw.length > 0) {
+    return AI_PLATFORM_IDS.filter((id) => raw.includes(id));
+  }
+  const fallback = cfg.get('enabledAiPlatforms', AI_PLATFORM_IDS);
+  if (Array.isArray(fallback) && fallback.length > 0) {
+    return AI_PLATFORM_IDS.filter((id) => fallback.includes(id));
+  }
+  return AI_PLATFORM_IDS.slice();
+}
+
+/**
+ * Read enabled AI platforms from configuration (legacy fallback).
  * @returns {string[]}
  */
 function getEnabledAiPlatforms() {
-  const raw = vscode.workspace.getConfiguration('antiMarkdown').get('enabledAiPlatforms', AI_PLATFORM_IDS);
-  if (!Array.isArray(raw)) {
-    return AI_PLATFORM_IDS.slice();
+  return getOtherFilesAiPlatforms();
+}
+
+/**
+ * Synchronize Accept state with Antigravity IDE agent hunk system and VS Code Chat / Copilot Editing.
+ * @param {vscode.Uri} documentUri
+ */
+async function syncEditorAndChatAccept(documentUri) {
+  if (!vscode) return;
+
+  // 1. Antigravity IDE agent commands
+  const agyCommands = [
+    'antigravity.prioritized.agentAcceptAllInFile',
+    'antigravity.prioritized.agentAcceptFocusedHunk'
+  ];
+  for (const cmd of agyCommands) {
+    try {
+      await vscode.commands.executeCommand(cmd);
+    } catch (_e) {}
   }
-  return AI_PLATFORM_IDS.filter((id) => raw.includes(id));
+
+  // 2. VS Code internal editSessions accept command
+  try {
+    await vscode.commands.executeCommand('_chat.editSessions.accept', [documentUri]);
+  } catch (_e) {}
+  try {
+    await vscode.commands.executeCommand('_chat.editSessions.accept', []);
+  } catch (_e) {}
+
+  // 3. VS Code Chat Editing / Copilot session commands
+  const vsCodeCommands = [
+    'chatEditing.acceptFile',
+    'chatEditor.action.accept',
+    'chatEditing.acceptAllFiles',
+    'chatEditor.action.acceptAllEdits',
+    'chatEditing.multidiff.acceptAllFiles',
+    'workbench.action.chat.applyCompareEdits'
+  ];
+  for (const cmd of vsCodeCommands) {
+    try {
+      await vscode.commands.executeCommand(cmd, documentUri);
+    } catch (_e) {}
+    try {
+      await vscode.commands.executeCommand(cmd, [documentUri]);
+    } catch (_e) {}
+    try {
+      await vscode.commands.executeCommand(cmd, { resource: documentUri });
+    } catch (_e) {}
+    try {
+      await vscode.commands.executeCommand(cmd);
+    } catch (_e) {}
+  }
+}
+
+/**
+ * Synchronize Reject / Discard state with Antigravity IDE agent hunk system and VS Code Chat / Copilot Editing.
+ * @param {vscode.Uri} documentUri
+ */
+async function syncEditorAndChatReject(documentUri) {
+  if (!vscode) return;
+
+  // 1. Antigravity IDE agent commands
+  const agyCommands = [
+    'antigravity.prioritized.agentRejectAllInFile',
+    'antigravity.prioritized.agentRejectFocusedHunk'
+  ];
+  for (const cmd of agyCommands) {
+    try {
+      await vscode.commands.executeCommand(cmd);
+    } catch (_e) {}
+  }
+
+  // 2. VS Code Chat Editing / Copilot session commands
+  const vsCodeCommands = [
+    'chatEditing.discardFile',
+    'chatEditor.action.reject',
+    'chatEditing.discardAllFiles',
+    'chatEditor.action.undoHunk',
+    'workbench.action.chat.undoEdits',
+    'workbench.action.chat.discardCompareEdits',
+    'github.copilot.chat.review.discardAll',
+    'github.copilot.sessions.discardChanges'
+  ];
+  for (const cmd of vsCodeCommands) {
+    try {
+      await vscode.commands.executeCommand(cmd, documentUri);
+    } catch (_e) {}
+    try {
+      await vscode.commands.executeCommand(cmd, [documentUri]);
+    } catch (_e) {}
+    try {
+      await vscode.commands.executeCommand(cmd, { resource: documentUri });
+    } catch (_e) {}
+    try {
+      await vscode.commands.executeCommand(cmd);
+    } catch (_e) {}
+  }
 }
 
 /**
@@ -1005,7 +1147,7 @@ function registerUniversalSelectionCapsule(context) {
   let hoverTimer = null;
 
   const updateContextKeys = () => {
-    const enabled = getEnabledAiPlatforms();
+    const enabled = getOtherFilesAiPlatforms();
     AI_PLATFORM_IDS.forEach((id) => {
       vscode.commands.executeCommand('setContext', `antiMarkdown.ai.${id}`, enabled.includes(id));
     });
@@ -1040,10 +1182,10 @@ function registerUniversalSelectionCapsule(context) {
             return null;
           }
 
-          if (vscode.workspace.getConfiguration('antiMarkdown').get('selectionHoverCapsule', true) === false) {
+          if (!getOtherFilesCapsuleEnabled()) {
             return null;
           }
-          const enabled = getEnabledAiPlatforms();
+          const enabled = getOtherFilesAiPlatforms();
           if (enabled.length === 0) {
             return null;
           }
@@ -1284,12 +1426,44 @@ function wireWebviewToDocument(webviewPanel, document, context, isSidePreview) {
         break;
       }
 
+      case 'updatePreviewAiPlatforms': {
+        if (Array.isArray(msg.platforms)) {
+          const allowed = ['vscode', 'antigravity', 'claude', 'codex'];
+          const cleaned = msg.platforms.filter((p) => allowed.includes(p));
+          const antiConfig = vscode.workspace.getConfiguration('antiMarkdown');
+          try {
+            await antiConfig.update('previewAiPlatforms', cleaned, vscode.ConfigurationTarget.Global);
+          } catch (_err) {
+            // Ignore config update error
+          }
+        }
+        break;
+      }
+
+      case 'updateOtherFilesCapsule': {
+        const antiConfig = vscode.workspace.getConfiguration('antiMarkdown');
+        try {
+          if (typeof msg.enabled === 'boolean') {
+            await antiConfig.update('otherFilesCapsuleEnabled', msg.enabled, vscode.ConfigurationTarget.Global);
+          }
+          if (Array.isArray(msg.platforms)) {
+            const allowed = ['vscode', 'antigravity', 'claude', 'codex'];
+            const cleaned = msg.platforms.filter((p) => allowed.includes(p));
+            await antiConfig.update('otherFilesAiPlatforms', cleaned, vscode.ConfigurationTarget.Global);
+          }
+        } catch (_err) {
+          // Ignore config update error
+        }
+        break;
+      }
+
       case 'updateAiPlatforms': {
         if (Array.isArray(msg.platforms)) {
           const allowed = ['vscode', 'antigravity', 'claude', 'codex'];
           const cleaned = msg.platforms.filter((p) => allowed.includes(p));
           const antiConfig = vscode.workspace.getConfiguration('antiMarkdown');
           try {
+            await antiConfig.update('previewAiPlatforms', cleaned, vscode.ConfigurationTarget.Global);
             await antiConfig.update('enabledAiPlatforms', cleaned, vscode.ConfigurationTarget.Global);
           } catch (_err) {
             // Ignore config update error
@@ -1305,12 +1479,7 @@ function wireWebviewToDocument(webviewPanel, document, context, isSidePreview) {
       }
 
       case 'acceptAllDiff': {
-        try {
-          await vscode.commands.executeCommand('antigravity.prioritized.agentAcceptAllInFile');
-        } catch (_e) {}
-        try {
-          await vscode.commands.executeCommand('antigravity.prioritized.agentAcceptFocusedHunk');
-        } catch (_e) {}
+        await syncEditorAndChatAccept(document.uri);
         documentBaselines.set(document.uri.toString(), document.getText());
         if (document.isDirty) {
           await document.save();
@@ -1321,12 +1490,7 @@ function wireWebviewToDocument(webviewPanel, document, context, isSidePreview) {
       }
 
       case 'rejectAllDiff': {
-        try {
-          await vscode.commands.executeCommand('antigravity.prioritized.agentRejectAllInFile');
-        } catch (_e) {}
-        try {
-          await vscode.commands.executeCommand('antigravity.prioritized.agentRejectFocusedHunk');
-        } catch (_e) {}
+        await syncEditorAndChatReject(document.uri);
         const baseline = getDocumentBaseline(document);
         if (typeof baseline === 'string' && baseline !== document.getText()) {
           isApplyingEditFromWebview = true;
@@ -1350,9 +1514,7 @@ function wireWebviewToDocument(webviewPanel, document, context, isSidePreview) {
       }
 
       case 'acceptDiffHunk': {
-        try {
-          await vscode.commands.executeCommand('antigravity.prioritized.agentAcceptFocusedHunk');
-        } catch (_e) {}
+        await syncEditorAndChatAccept(document.uri);
         if (msg.hunk && typeof msg.hunk.startOrigLine === 'number') {
           const uriStr = document.uri.toString();
           const baseline = getDocumentBaseline(document);
@@ -1370,9 +1532,7 @@ function wireWebviewToDocument(webviewPanel, document, context, isSidePreview) {
       }
 
       case 'rejectDiffHunk': {
-        try {
-          await vscode.commands.executeCommand('antigravity.prioritized.agentRejectFocusedHunk');
-        } catch (_e) {}
+        await syncEditorAndChatReject(document.uri);
         if (msg.hunk && typeof msg.hunk.startModLine === 'number') {
           isApplyingEditFromWebview = true;
           try {
@@ -1665,6 +1825,11 @@ module.exports = {
   parseAndValidateFileTarget,
   computeFastLineDiff,
   computeDocumentDiff,
-  getGitHeadContent
+  getGitHeadContent,
+  getOtherFilesCapsuleEnabled,
+  getOtherFilesAiPlatforms,
+  getPreviewAiPlatforms,
+  syncEditorAndChatAccept,
+  syncEditorAndChatReject
 };
 

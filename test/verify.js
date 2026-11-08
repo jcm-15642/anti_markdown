@@ -300,7 +300,10 @@ function runVerificationSuite() {
   assert.strictEqual(pkg.contributes.customEditors[0].viewType, 'antiMarkdown.artifactEditor');
   const patterns = pkg.contributes.customEditors[0].selector.map((s) => s.filenamePattern);
   assert.ok(patterns.includes('**/*.md'), 'Must match **/*.md across local and WSL Remote');
-  console.log(`✓ package.json (v${pkg.version}) customEditors & commands verified`);
+  assert.ok(pkg.contributes.configuration.properties['antiMarkdown.previewAiPlatforms'], 'Must declare previewAiPlatforms config');
+  assert.ok(pkg.contributes.configuration.properties['antiMarkdown.otherFilesCapsuleEnabled'], 'Must declare otherFilesCapsuleEnabled config');
+  assert.ok(pkg.contributes.configuration.properties['antiMarkdown.otherFilesAiPlatforms'], 'Must declare otherFilesAiPlatforms config');
+  console.log(`✓ package.json (v${pkg.version}) customEditors, configurations & commands verified`);
 
   console.log('=== 3. Verifying Security Rules on Source Files ===');
   const extSource = fs.readFileSync(path.join(ROOT, 'out', 'extension.js'), 'utf8');
@@ -395,6 +398,15 @@ function runVerificationSuite() {
   const diffAfterRevert0 = ext.computeFastLineDiff(multiOrig, revertedHunk0Text);
   assert.strictEqual(diffAfterRevert0.hunks.length, 1, 'After reverting hunk 0, only hunk 1 remains');
   assert.strictEqual(diffAfterRevert0.hunks[0].addedTexts[0], 'D_NEW');
+
+  assert.strictEqual(typeof ext.getPreviewAiPlatforms, 'function');
+  assert.strictEqual(typeof ext.getOtherFilesCapsuleEnabled, 'function');
+  assert.strictEqual(typeof ext.getOtherFilesAiPlatforms, 'function');
+  assert.strictEqual(typeof ext.syncEditorAndChatAccept, 'function');
+  assert.strictEqual(typeof ext.syncEditorAndChatReject, 'function');
+  assert.deepStrictEqual(ext.getPreviewAiPlatforms(), ['vscode', 'antigravity', 'claude', 'codex']);
+  assert.strictEqual(ext.getOtherFilesCapsuleEnabled(), true);
+  assert.deepStrictEqual(ext.getOtherFilesAiPlatforms(), ['vscode', 'antigravity', 'claude', 'codex']);
 
   console.log('✓ Verified computeFastLineDiff (+3 lines, -6 lines scenario), hunk grouping & hunk revert');
 

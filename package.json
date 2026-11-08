@@ -2,7 +2,7 @@
   "name": "anti-markdown",
   "displayName": "Anti Markdown",
   "description": "Anti Markdown - Modern Markdown live editor, AI diff review, and rich renderer with Mermaid diagrams, KaTeX math, GitHub alerts, Carousels, and universal selection AI capsule for VS Code / Antigravity IDE.",
-  "version": "1.7.6",
+  "version": "1.7.7",
   "publisher": "mazhao",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -231,6 +231,49 @@
           "default": true,
           "description": "Show the collapsible Table of Contents (TOC) outline sidebar by default."
         },
+        "antiMarkdown.previewAiPlatforms": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "vscode",
+              "antigravity",
+              "claude",
+              "codex"
+            ]
+          },
+          "default": [
+            "vscode",
+            "antigravity",
+            "claude",
+            "codex"
+          ],
+          "description": "预览渲染窗口中启用的 AI 平台列表 (AI platforms enabled in Markdown preview window)."
+        },
+        "antiMarkdown.otherFilesCapsuleEnabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "其他代码等普通文件中是否开启选中文本悬浮胶囊 (Enable floating AI selection capsule for code and other files)."
+        },
+        "antiMarkdown.otherFilesAiPlatforms": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "vscode",
+              "antigravity",
+              "claude",
+              "codex"
+            ]
+          },
+          "default": [
+            "vscode",
+            "antigravity",
+            "claude",
+            "codex"
+          ],
+          "description": "其他代码等普通文件的悬浮胶囊中启用的 AI 平台列表 (AI platforms enabled in other files' selection capsule)."
+        },
         "antiMarkdown.enabledAiPlatforms": {
           "type": "array",
           "items": {
@@ -248,7 +291,7 @@
             "claude",
             "codex"
           ],
-          "description": "Enabled AI chat platforms shown in the top menu bar and unfolded in the floating selection capsule."
+          "description": "Legacy fallback: Enabled AI chat platforms."
         },
         "antiMarkdown.selectionHoverCapsule": {
           "type": "boolean",
