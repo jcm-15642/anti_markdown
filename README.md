@@ -11,7 +11,19 @@
 - **快捷切换源码与预览**：通过快捷键 `Ctrl+Alt+M`（Mac 为 `Cmd+Alt+M`）或编辑器右上角切换图标，可随时在 Anti Markdown 富文本视图与 VS Code 原始纯文本编辑器之间一键平滑切换。
 - **可折叠目录大纲 (TOC Outline)**：自动提取全文标题层级，右上角点击“☰ 目录大纲”可随时展开或折叠大纲面板，支持一键点击平滑滚动跳转。
 
-### 2. 全能 Markdown 扩展语法支持
+### 2. AI 实时修改审查与差异高亮 (AI Diff Review & Inline Accept/Reject)
+- **原汁原味 IDE 审查交互**：当 AI（如 Antigravity / Claude Code / Codex / Copilot）编辑 Markdown 文档时，预览窗口直接呈现原生 IDE 级别的审查条：`✓ Accept | ✕ Reject | +X lines, -Y lines`。
+- **新增与修改内容绿色高亮**：被添加或修改的段落、标题、列表项以高辨识度的柔和绿色背景与左侧高亮绿条标注，差异一目了然。
+- **删除内容清晰预览**：被 AI 移除的原有文字自动展示在可折叠的红色删除框中（红色删除线排版），便于对比变更。
+- **段落级与全文级双模式审查**：
+  - **段落级**：点击每个变更块上方的 `✓ Accept` / `✕ Reject` 或悬浮工具栏中的 `✓ 接受此段` / `✕ 还原此段`，仅采纳或还原当前段落；
+  - **全文级**：通过顶部吸顶审查栏一键 `✓ 全部接受 (Accept All)` 或 `✕ 全部拒绝 (Reject All)`；
+- **全键盘快捷键支持**：
+  - `Alt+Enter`：接受修改；
+  - `Alt+Shift+Backspace`：还原修改；
+  - `Alt+J` / `Alt+K`：平滑滚动聚焦到下一处 / 上一处修改位置。
+
+### 3. 全能 Markdown 扩展语法支持
 - **内置 Mermaid 交互矢量图表**：
   - 原生支持 `flowchart` / `graph`（支持节点自定义颜色、形状与子图分组）、`sequenceDiagram`（时序图）、`erDiagram`（实体关系模型表）、`xychart-beta` 等常见图表；
   - 支持无损矢量缩放、平移与查看 DSL 源码。
@@ -26,7 +38,7 @@
   - 智能识别 `[utils.py](file:///path/to/utils.py#L10-L20)` 格式；
   - 点击胶囊直接在侧边栏编辑器打开对应文件，并高亮聚焦指定的代码行。
 
-### 3. 全编辑器通用悬浮 AI 胶囊 (Universal Selection AI Capsule)
+### 4. 全编辑器通用悬浮 AI 胶囊 (Universal Selection AI Capsule)
 在任意打开的代码编辑器（无论是 Markdown 源码还是 `.js`、`.ts`、`.py`、`.java`、`.go` 等常规代码文件）中选中文本时，均可自动唤起悬浮交互胶囊：
 - **行范围指示徽章**：清晰呈现当前框选的行号区间（如 `L10-15`）。
 - **一键发送到多 AI 聊天平台**：
@@ -38,7 +50,7 @@
   - 胶囊智能呈现在选区下方空白区域，绝不遮蔽任何被选中的代码内容；
   - 纯原生选区交互，无论是快速划选还是慢速跨行拖拽，均零断触、零丢弃。
 
-### 4. 双引擎灵活切换
+### 5. 双引擎灵活切换
 - **Anti Markdown Pro 引擎**：内置高性能独立富文本渲染器，支持即时原位编辑与多格式扩展。
 - **原生内置视图一键切换**：支持随时一键无缝唤起 Antigravity IDE 官方原生 `antigravity.artifactEditor` (`jetski-artifact`) 查看效果。
 

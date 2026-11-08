@@ -2599,6 +2599,168 @@
   }
 
   /**
+   * Create an inline Hunk Action Banner matching the Antigravity IDE Raw Editor diff bar
+   * (`✓ Accept | ✕ Reject | +3 lines, -6 lines`).
+   * @param {object} hunk
+   * @param {object} callbacks
+   * @returns {HTMLElement}
+   */
+  function createDiffHunkBanner(hunk, callbacks) {
+    const banner = el('div', 'agy-diff-hunk-banner', null, {
+      'data-hunk-index': hunk.hunkIndex,
+      id: `agy-diff-hunk-${hunk.hunkIndex}`
+    });
+
+    const acceptBtn = el('button', 'agy-diff-action-btn agy-diff-btn-accept', '✓ Accept', {
+      title: '接受此段修改 (快捷键 Alt+Enter)'
+    });
+    acceptBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (callbacks && typeof callbacks.onAcceptHunk === 'function') {
+        callbacks.onAcceptHunk(hunk);
+      }
+    });
+
+    const sep1 = el('span', 'agy-diff-sep', '|');
+
+    const rejectBtn = el('button', 'agy-diff-action-btn agy-diff-btn-reject', '✕ Reject', {
+      title: '还原此段修改 (快捷键 Alt+Shift+Backspace)'
+    });
+    rejectBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (callbacks && typeof callbacks.onRejectHunk === 'function') {
+        callbacks.onRejectHunk(hunk);
+      }
+    });
+
+    const sep2 = el('span', 'agy-diff-sep', '|');
+
+    banner.appendChild(acceptBtn);
+    banner.appendChild(sep1);
+    banner.appendChild(rejectBtn);
+    banner.appendChild(sep2);
+
+    if (hunk.addedCount > 0) {
+      banner.appendChild(el('span', 'agy-diff-stat-add', `+${hunk.addedCount} lines`));
+    }
+    if (hunk.addedCount > 0 && hunk.removedCount > 0) {
+      banner.appendChild(el('span', 'agy-diff-stat-comma', ', '));
+    }
+    if (hunk.removedCount > 0) {
+      banner.appendChild(el('span', 'agy-diff-stat-del', `-${hunk.removedCount} lines`));
+    }
+
+    return banner;
+  }
+
+  /**
+   * Create a display box for deleted lines rendered with red strikethrough styling.
+   * @param {object} hunk
+   * @returns {HTMLElement}
+   */
+  function createDiffDeletedContainer(hunk) {
+    const box = el('div', 'agy-diff-deleted-container');
+    const header = el('div', 'agy-diff-deleted-header');
+    header.appendChild(el('span', 'agy-diff-del-icon', '−'));
+    header.appendChild(el('span', 'agy-diff-del-label', `已删除 ${hunk.removedCount} 行 (原始版本):`));
+    box.appendChild(header);
+
+    const pre = el('pre', 'agy-diff-deleted-content', (hunk.deletedTexts || []).join('\n'));
+    box.appendChild(pre);
+    return box;
+  }
+
+  /**
+   * Update the Sticky Diff Review Bar at the top of the preview pane.
+   * @param {HTMLElement} stickyBar
+   * @param {object | null} diff
+   * @param {object} callbacks
+   */
+  function updateDiffStickyBar(stickyBar, diff, callbacks) {
+    if (!stickyBar) return;
+    if (!diff || !diff.hasDiff || (diff.addedCount === 0 && diff.removedCount === 0)) {
+      stickyBar.style.display = 'none';
+      stickyBar.replaceChildren();
+      return;
+    }
+
+    stickyBar.style.display = 'flex';
+    stickyBar.replaceChildren();
+
+    const left = el('div', 'agy-diff-sticky-left');
+    const badge = el('span', 'agy-diff-sticky-badge', '✦ AI 修改待审查');
+    left.appendChild(badge);
+
+    const acceptAllBtn = el('button', 'agy-diff-action-btn agy-diff-btn-accept', '✓ 全部接受 (Accept All)', {
+      title: '接受文件内全部 AI 修改并保存 (Alt+Enter)'
+    });
+    acceptAllBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (callbacks && typeof callbacks.onAcceptAllDiff === 'function') {
+        callbacks.onAcceptAllDiff();
+      }
+    });
+    left.appendChild(acceptAllBtn);
+
+    left.appendChild(el('span', 'agy-diff-sep', '|'));
+
+    const rejectAllBtn = el('button', 'agy-diff-action-btn agy-diff-btn-reject', '✕ 全部拒绝 (Reject All)', {
+      title: '还原文件内全部修改至原始版本 (Alt+Shift+Backspace)'
+    });
+    rejectAllBtn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      if (callbacks && typeof callbacks.onRejectAllDiff === 'function') {
+        callbacks.onRejectAllDiff();
+      }
+    });
+    left.appendChild(rejectAllBtn);
+
+    left.appendChild(el('span', 'agy-diff-sep', '|'));
+
+    if (diff.addedCount > 0) {
+      left.appendChild(el('span', 'agy-diff-stat-add', `+${diff.addedCount} lines`));
+    }
+    if (diff.addedCount > 0 && diff.removedCount > 0) {
+      left.appendChild(el('span', 'agy-diff-stat-comma', ', '));
+    }
+    if (diff.removedCount > 0) {
+      left.appendChild(el('span', 'agy-diff-stat-del', `-${diff.removedCount} lines`));
+    }
+
+    const right = el('div', 'agy-diff-sticky-right');
+    if (diff.hunks && diff.hunks.length > 0) {
+      let navIdx = 0;
+      const countLabel = el('span', 'agy-diff-nav-count', `${diff.hunks.length} 处更改`);
+      right.appendChild(countLabel);
+
+      const nextBtn = el('button', 'agy-diff-nav-btn', '↓ 下一处', { title: '跳转到下一个修改处 (Alt+J)' });
+      nextBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        const target = document.getElementById(`agy-diff-hunk-${navIdx}`);
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        navIdx = (navIdx + 1) % diff.hunks.length;
+      });
+      right.appendChild(nextBtn);
+
+      const prevBtn = el('button', 'agy-diff-nav-btn', '↑ 上一处', { title: '跳转到上一个修改处 (Alt+K)' });
+      prevBtn.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        navIdx = (navIdx - 1 + diff.hunks.length) % diff.hunks.length;
+        const target = document.getElementById(`agy-diff-hunk-${navIdx}`);
+        if (target) {
+          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+      });
+      right.appendChild(prevBtn);
+    }
+
+    stickyBar.appendChild(left);
+    stickyBar.appendChild(right);
+  }
+
+  /**
    * Render an array of AST blocks into a container DOM element with in-preview live editing wrappers.
    * @param {HTMLElement} container
    * @param {Array<any>} blocks
@@ -2609,16 +2771,59 @@
       container.appendChild(createInsertDivider(blocks[0].startLine, callbacks, container));
     }
 
+    const diffHunks = (callbacks && callbacks.diff && callbacks.diff.hunks) || [];
+    const hunkPlacementMap = new Map();
+    const trailingHunks = [];
+
+    diffHunks.forEach((hunk) => {
+      let placed = false;
+      for (let b = 0; b < blocks.length; b++) {
+        const blk = blocks[b];
+        if (hunk.startModLine <= blk.endLine) {
+          if (!hunkPlacementMap.has(b)) {
+            hunkPlacementMap.set(b, []);
+          }
+          hunkPlacementMap.get(b).push(hunk);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) {
+        trailingHunks.push(hunk);
+      }
+    });
+
     for (let i = 0; i < blocks.length; i++) {
       const block = blocks[i];
       const startLine1 = (block.startLine || 0) + 1;
       const endLine1 = (block.endLine !== undefined ? block.endLine : block.startLine || 0) + 1;
+
+      // Render any hunk banners and deleted content that precede this block
+      if (hunkPlacementMap.has(i)) {
+        const hunksForBlock = hunkPlacementMap.get(i);
+        hunksForBlock.forEach((hunk) => {
+          container.appendChild(createDiffHunkBanner(hunk, callbacks));
+          if (hunk.removedCount > 0 && hunk.deletedTexts && hunk.deletedTexts.length > 0) {
+            container.appendChild(createDiffDeletedContainer(hunk));
+          }
+        });
+      }
 
       const wrapper = el('div', 'agy-editable-block', null, {
         'data-start-line': startLine1,
         'data-end-line': endLine1,
         'data-block-index': i
       });
+
+      const isDiffAdded =
+        callbacks &&
+        callbacks.diff &&
+        Array.isArray(callbacks.diff.addedLines) &&
+        callbacks.diff.addedLines.some((l) => l >= block.startLine && l <= block.endLine);
+
+      if (isDiffAdded) {
+        wrapper.classList.add('agy-diff-added');
+      }
 
       // Hover Action Toolbar (Direct Edit + Send to Chat, positioned outside the block box)
       const toolbar = el('div', 'agy-block-toolbar');
@@ -2631,6 +2836,31 @@
 
       toolbar.appendChild(editBtn);
       toolbar.appendChild(chatBtn);
+
+      const coveringHunk = diffHunks.find((h) => h.startModLine <= block.endLine && h.endModLine >= block.startLine);
+      if (coveringHunk) {
+        const acceptHunkBtn = el('button', 'agy-block-btn agy-block-btn-accept', '✓ 接受此段', {
+          title: '接受并保留此段 AI 修改'
+        });
+        acceptHunkBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          if (callbacks && typeof callbacks.onAcceptHunk === 'function') {
+            callbacks.onAcceptHunk(coveringHunk);
+          }
+        });
+        const rejectHunkBtn = el('button', 'agy-block-btn agy-block-btn-reject', '✕ 还原此段', {
+          title: '还原此段修改至原始版本'
+        });
+        rejectHunkBtn.addEventListener('click', (ev) => {
+          ev.stopPropagation();
+          if (callbacks && typeof callbacks.onRejectHunk === 'function') {
+            callbacks.onRejectHunk(coveringHunk);
+          }
+        });
+        toolbar.appendChild(acceptHunkBtn);
+        toolbar.appendChild(rejectHunkBtn);
+      }
+
       wrapper.appendChild(toolbar);
 
       const contentBox = el('div', 'agy-block-content');
@@ -2955,6 +3185,14 @@
       container.appendChild(createInsertDivider(nextInsertLine, callbacks, container));
     }
 
+    // Render any trailing diff hunks that occur after all document blocks
+    trailingHunks.forEach((hunk) => {
+      container.appendChild(createDiffHunkBanner(hunk, callbacks));
+      if (hunk.removedCount > 0 && hunk.deletedTexts && hunk.deletedTexts.length > 0) {
+        container.appendChild(createDiffDeletedContainer(hunk));
+      }
+    });
+
     if (blocks.length === 0) {
       container.appendChild(createInsertDivider(0, callbacks, container));
     }
@@ -2984,7 +3222,8 @@
       viewMode: 'preview',
       showOutline: true,
       aiCompanionEnabled: false,
-      initializedConfig: false
+      initializedConfig: false,
+      diff: null
     };
 
     // Build Top Header Bar (only AI platform toggles + outline toggle)
@@ -3056,7 +3295,10 @@
 
     // Preview Pane
     const previewPane = el('main', 'agy-preview-pane');
+    const diffStickyBar = el('div', 'agy-diff-sticky-bar');
+    diffStickyBar.style.display = 'none';
     const docContainer = el('article', 'agy-document');
+    previewPane.appendChild(diffStickyBar);
     previewPane.appendChild(docContainer);
 
     workspace.appendChild(outlineAside);
@@ -3343,6 +3585,9 @@
       get baseWebviewUri() {
         return state.baseWebviewUri;
       },
+      get diff() {
+        return state.diff;
+      },
       getBlockMarkdown(startLine, endLine) {
         const lines = state.text.replace(/\r\n/g, '\n').split('\n');
         return lines.slice(startLine, endLine + 1).join('\n');
@@ -3359,6 +3604,26 @@
           pushTextEditToExtension(state.text, true);
         }
         renderDocument();
+      },
+      onAcceptAllDiff() {
+        if (vscode) {
+          vscode.postMessage({ type: 'acceptAllDiff' });
+        }
+      },
+      onRejectAllDiff() {
+        if (vscode) {
+          vscode.postMessage({ type: 'rejectAllDiff' });
+        }
+      },
+      onAcceptHunk(hunk) {
+        if (vscode) {
+          vscode.postMessage({ type: 'acceptDiffHunk', hunk });
+        }
+      },
+      onRejectHunk(hunk) {
+        if (vscode) {
+          vscode.postMessage({ type: 'rejectDiffHunk', hunk });
+        }
       },
       onAddRangeToChat(startLineNumber, endLineNumber, snippetText) {
         const preferred = state.enabledAiPlatforms[0] || '';
@@ -3396,6 +3661,7 @@
 
     function renderDocument() {
       dirtyDot.style.display = state.isDirty ? 'inline-block' : 'none';
+      updateDiffStickyBar(diffStickyBar, state.diff, callbacks);
 
       const ast = parseMarkdownToAst(state.text);
 
@@ -3457,6 +3723,7 @@
       }
 
       state.text = msg.text || '';
+      state.diff = msg.diff || null;
       state.fileName = msg.fileName || 'Document.md';
       state.filePath = msg.filePath || '';
       state.baseWebviewUri = msg.baseWebviewUri || '';
@@ -3478,6 +3745,40 @@
       }
     });
 
+    window.addEventListener('keydown', (ev) => {
+      if (ev.altKey && !ev.ctrlKey && !ev.metaKey) {
+        if (ev.key === 'Enter') {
+          if (state.diff && state.diff.hasDiff) {
+            ev.preventDefault();
+            callbacks.onAcceptAllDiff();
+          }
+        } else if (ev.key === 'Backspace' && ev.shiftKey) {
+          if (state.diff && state.diff.hasDiff) {
+            ev.preventDefault();
+            callbacks.onRejectAllDiff();
+          }
+        } else if (ev.key.toLowerCase() === 'j') {
+          const hunks = document.querySelectorAll('.agy-diff-hunk-banner');
+          if (hunks.length > 0) {
+            ev.preventDefault();
+            const next =
+              Array.from(hunks).find((h) => h.getBoundingClientRect().top > window.innerHeight * 0.35) || hunks[0];
+            next.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        } else if (ev.key.toLowerCase() === 'k') {
+          const hunks = document.querySelectorAll('.agy-diff-hunk-banner');
+          if (hunks.length > 0) {
+            ev.preventDefault();
+            const reversed = Array.from(hunks).reverse();
+            const prev =
+              reversed.find((h) => h.getBoundingClientRect().top < window.innerHeight * 0.25) ||
+              hunks[hunks.length - 1];
+            prev.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }
+      }
+    });
+
     if (vscode) {
       vscode.postMessage({ type: 'ready' });
     }
@@ -3494,7 +3795,9 @@
       renderMathDom,
       readLatexArgument,
       appendInlineNodes,
-      renderBlocksIntoDom
+      renderBlocksIntoDom,
+      createDiffHunkBanner,
+      createDiffDeletedContainer
     };
   }
 })();

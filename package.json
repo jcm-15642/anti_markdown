@@ -1,8 +1,8 @@
 {
   "name": "anti-markdown",
   "displayName": "Anti Markdown",
-  "description": "Anti Markdown - Modern Markdown live editor and rich renderer with Mermaid diagrams, KaTeX math, GitHub alerts, Carousels, and universal selection AI capsule for VS Code / Antigravity IDE.",
-  "version": "1.7.5",
+  "description": "Anti Markdown - Modern Markdown live editor, AI diff review, and rich renderer with Mermaid diagrams, KaTeX math, GitHub alerts, Carousels, and universal selection AI capsule for VS Code / Antigravity IDE.",
+  "version": "1.7.6",
   "publisher": "mazhao",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -254,6 +254,11 @@
           "type": "boolean",
           "default": true,
           "description": "Show the floating AI capsule (Hover: VS Code / Antigravity / Claude Code / Codex) over the current selection in any file."
+        },
+        "antiMarkdown.showDiffReview": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show inline diff review banners (✓ Accept | ✕ Reject | +X lines, -Y lines) and green additions highlight when files have AI edits or git modifications."
         }
       }
     }

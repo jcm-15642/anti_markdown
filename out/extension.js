@@ -1,10 +1,16 @@
 'use strict';
 
-const vscode = require('vscode');
+let vscode;
+try {
+  vscode = require('vscode');
+} catch (_err) {
+  vscode = null;
+}
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const crypto = require('crypto');
+const cp = require('child_process');
 
 const VIEW_TYPE = 'antiMarkdown.artifactEditor';
 const NATIVE_VIEW_TYPE = 'antigravity.artifactEditor';
@@ -341,6 +347,256 @@ function getLocalResourceRoots(context, documentUri) {
   return roots;
 }
 
+// In-memory document baselines for diff review and accept/reject tracking
+const documentBaselines = new Map();
+
+/**
+ * Get git HEAD content for a file if it is in a git repository.
+ * @param {string} filePath
+ * @returns {string | null}
+ */
+function getGitHeadContent(filePath) {
+  if (!filePath || typeof filePath !== 'string') {
+    return null;
+  }
+  try {
+    const dir = path.dirname(filePath);
+    if (!fs.existsSync(dir)) {
+      return null;
+    }
+    const gitRoot = cp
+      .execFileSync('git', ['rev-parse', '--show-toplevel'], {
+        cwd: dir,
+        encoding: 'utf8',
+        timeout: 1200,
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+      .trim();
+    if (!gitRoot) {
+      return null;
+    }
+    const relPath = path.relative(gitRoot, filePath).replace(/\\/g, '/');
+    const headContent = cp.execFileSync('git', ['show', `HEAD:${relPath}`], {
+      cwd: gitRoot,
+      encoding: 'utf8',
+      timeout: 1500,
+      maxBuffer: 15 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore']
+    });
+    return headContent;
+  } catch (_err) {
+    return null;
+  }
+}
+
+/**
+ * Get the original baseline content for a document (before AI edits or uncommitted edits).
+ * @param {vscode.TextDocument} document
+ * @returns {string}
+ */
+function getDocumentBaseline(document) {
+  const uriStr = document.uri.toString();
+  if (documentBaselines.has(uriStr)) {
+    return documentBaselines.get(uriStr);
+  }
+
+  const filePath = document.uri.fsPath || document.uri.path;
+  const gitHead = getGitHeadContent(filePath);
+  if (typeof gitHead === 'string') {
+    documentBaselines.set(uriStr, gitHead);
+    return gitHead;
+  }
+
+  if (filePath && fs.existsSync(filePath) && document.isDirty) {
+    try {
+      const diskContent = fs.readFileSync(filePath, 'utf8');
+      documentBaselines.set(uriStr, diskContent);
+      return diskContent;
+    } catch (_e) {}
+  }
+
+  const text = document.getText();
+  documentBaselines.set(uriStr, text);
+  return text;
+}
+
+/**
+ * Compute line-level diff and hunks between originalText and modifiedText.
+ * Uses prefix/suffix trimming + LCS for high performance and accurate hunk grouping.
+ * @param {string} originalText
+ * @param {string} modifiedText
+ * @returns {{ hasDiff: boolean, addedCount: number, removedCount: number, addedLines: number[], hunks: Array<any> }}
+ */
+function computeFastLineDiff(originalText, modifiedText) {
+  if (originalText === modifiedText) {
+    return {
+      hasDiff: false,
+      addedCount: 0,
+      removedCount: 0,
+      addedLines: [],
+      hunks: []
+    };
+  }
+
+  const origLines = (originalText || '').replace(/\r\n/g, '\n').split('\n');
+  const modLines = (modifiedText || '').replace(/\r\n/g, '\n').split('\n');
+
+  let startPrefix = 0;
+  while (
+    startPrefix < origLines.length &&
+    startPrefix < modLines.length &&
+    origLines[startPrefix] === modLines[startPrefix]
+  ) {
+    startPrefix++;
+  }
+
+  let endOrig = origLines.length - 1;
+  let endMod = modLines.length - 1;
+  while (
+    endOrig >= startPrefix &&
+    endMod >= startPrefix &&
+    origLines[endOrig] === modLines[endMod]
+  ) {
+    endOrig--;
+    endMod--;
+  }
+
+  const trimmedOrig = origLines.slice(startPrefix, endOrig + 1);
+  const trimmedMod = modLines.slice(startPrefix, endMod + 1);
+  const m = trimmedOrig.length;
+  const n = trimmedMod.length;
+
+  const dp = Array.from({ length: m + 1 }, () => new Int32Array(n + 1));
+  for (let i = 0; i < m; i++) {
+    for (let j = 0; j < n; j++) {
+      if (trimmedOrig[i] === trimmedMod[j]) {
+        dp[i + 1][j + 1] = dp[i][j] + 1;
+      } else {
+        dp[i + 1][j + 1] = Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+  }
+
+  const diffItems = [];
+  let i = m;
+  let j = n;
+  while (i > 0 || j > 0) {
+    if (i > 0 && j > 0 && trimmedOrig[i - 1] === trimmedMod[j - 1]) {
+      diffItems.unshift({
+        type: 'same',
+        modLine: startPrefix + j - 1,
+        origLine: startPrefix + i - 1,
+        text: trimmedMod[j - 1]
+      });
+      i--;
+      j--;
+    } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+      diffItems.unshift({
+        type: 'add',
+        modLine: startPrefix + j - 1,
+        origLine: startPrefix + i - 1,
+        text: trimmedMod[j - 1]
+      });
+      j--;
+    } else if (i > 0 && (j === 0 || dp[i][j - 1] < dp[i - 1][j])) {
+      diffItems.unshift({
+        type: 'del',
+        origLine: startPrefix + i - 1,
+        modLine: startPrefix + j - 1,
+        text: trimmedOrig[i - 1]
+      });
+      i--;
+    }
+  }
+
+  let addedCount = 0;
+  let removedCount = 0;
+  const addedLines = [];
+  const hunks = [];
+  let currentHunk = null;
+
+  for (let idx = 0; idx < diffItems.length; idx++) {
+    const item = diffItems[idx];
+    if (item.type === 'add' || item.type === 'del') {
+      if (!currentHunk) {
+        currentHunk = {
+          hunkIndex: hunks.length,
+          startModLine: item.type === 'add' ? item.modLine : item.modLine + 1,
+          endModLine: item.type === 'add' ? item.modLine : item.modLine,
+          startOrigLine: item.type === 'del' ? item.origLine : item.origLine + 1,
+          endOrigLine: item.type === 'del' ? item.origLine : item.origLine,
+          addedCount: 0,
+          removedCount: 0,
+          addedTexts: [],
+          deletedTexts: []
+        };
+      }
+      if (item.type === 'add') {
+        currentHunk.addedCount++;
+        currentHunk.addedTexts.push(item.text);
+        currentHunk.endModLine = Math.max(currentHunk.endModLine, item.modLine);
+        addedLines.push(item.modLine);
+        addedCount++;
+      } else {
+        currentHunk.removedCount++;
+        currentHunk.deletedTexts.push(item.text);
+        currentHunk.endOrigLine = Math.max(currentHunk.endOrigLine, item.origLine);
+        removedCount++;
+      }
+    } else {
+      if (currentHunk) {
+        hunks.push(currentHunk);
+        currentHunk = null;
+      }
+    }
+  }
+  if (currentHunk) {
+    hunks.push(currentHunk);
+  }
+
+  return {
+    hasDiff: addedCount > 0 || removedCount > 0,
+    addedCount,
+    removedCount,
+    addedLines,
+    hunks
+  };
+}
+
+/**
+ * Compute document diff against git HEAD or baseline content.
+ * @param {vscode.TextDocument} document
+ * @returns {{ hasDiff: boolean, addedCount: number, removedCount: number, addedLines: number[], hunks: Array<any> }}
+ */
+function computeDocumentDiff(document) {
+  try {
+    const config = vscode.workspace.getConfiguration('antiMarkdown');
+    if (config.get('showDiffReview', true) === false) {
+      return { hasDiff: false, addedCount: 0, removedCount: 0, addedLines: [], hunks: [] };
+    }
+    const filePath = document.uri.fsPath || document.uri.path;
+    const uriStr = document.uri.toString();
+    const currentText = document.getText();
+
+    // Check if git HEAD matches currentText
+    const gitHead = getGitHeadContent(filePath);
+    if (typeof gitHead === 'string') {
+      if (gitHead === currentText) {
+        documentBaselines.set(uriStr, gitHead);
+        return { hasDiff: false, addedCount: 0, removedCount: 0, addedLines: [], hunks: [] };
+      }
+      if (!documentBaselines.has(uriStr)) {
+        documentBaselines.set(uriStr, gitHead);
+      }
+    }
+
+    const baseline = getDocumentBaseline(document);
+    return computeFastLineDiff(baseline, currentText);
+  } catch (_e) {
+    return { hasDiff: false, addedCount: 0, removedCount: 0, addedLines: [], hunks: [] };
+  }
+}
+
 /**
  * Create a message payload describing the current document state for the webview.
  * @param {vscode.TextDocument} document
@@ -369,6 +625,8 @@ function createDocumentPayload(document, webview, isSidePreview) {
       ? rawPlatforms
       : ['vscode', 'antigravity', 'claude', 'codex'];
 
+  const diff = computeDocumentDiff(document);
+
   return {
     type: 'documentUpdate',
     text: document.getText(),
@@ -380,6 +638,7 @@ function createDocumentPayload(document, webview, isSidePreview) {
     isBrainArtifact,
     isSidePreview: Boolean(isSidePreview),
     lastModified,
+    diff,
     config: {
       showOutline: config.get('showOutline', true),
       enabledAiPlatforms
@@ -1045,6 +1304,99 @@ function wireWebviewToDocument(webviewPanel, document, context, isSidePreview) {
         break;
       }
 
+      case 'acceptAllDiff': {
+        try {
+          await vscode.commands.executeCommand('antigravity.prioritized.agentAcceptAllInFile');
+        } catch (_e) {}
+        try {
+          await vscode.commands.executeCommand('antigravity.prioritized.agentAcceptFocusedHunk');
+        } catch (_e) {}
+        documentBaselines.set(document.uri.toString(), document.getText());
+        if (document.isDirty) {
+          await document.save();
+        }
+        sendUpdate();
+        vscode.window.setStatusBarMessage('Anti Markdown: 已接受全部修改', 3000);
+        break;
+      }
+
+      case 'rejectAllDiff': {
+        try {
+          await vscode.commands.executeCommand('antigravity.prioritized.agentRejectAllInFile');
+        } catch (_e) {}
+        try {
+          await vscode.commands.executeCommand('antigravity.prioritized.agentRejectFocusedHunk');
+        } catch (_e) {}
+        const baseline = getDocumentBaseline(document);
+        if (typeof baseline === 'string' && baseline !== document.getText()) {
+          isApplyingEditFromWebview = true;
+          try {
+            const fullRange = new vscode.Range(
+              document.positionAt(0),
+              document.positionAt(document.getText().length)
+            );
+            const edit = new vscode.WorkspaceEdit();
+            edit.replace(document.uri, fullRange, baseline);
+            await vscode.workspace.applyEdit(edit);
+            await document.save();
+          } finally {
+            isApplyingEditFromWebview = false;
+          }
+        }
+        documentBaselines.set(document.uri.toString(), document.getText());
+        sendUpdate();
+        vscode.window.setStatusBarMessage('Anti Markdown: 已还原全部修改', 3000);
+        break;
+      }
+
+      case 'acceptDiffHunk': {
+        try {
+          await vscode.commands.executeCommand('antigravity.prioritized.agentAcceptFocusedHunk');
+        } catch (_e) {}
+        if (msg.hunk && typeof msg.hunk.startOrigLine === 'number') {
+          const uriStr = document.uri.toString();
+          const baseline = getDocumentBaseline(document);
+          const bLines = baseline.replace(/\r\n/g, '\n').split('\n');
+          const origCount = Math.max(0, msg.hunk.endOrigLine - msg.hunk.startOrigLine + 1);
+          bLines.splice(msg.hunk.startOrigLine, origCount, ...(msg.hunk.addedTexts || []));
+          documentBaselines.set(uriStr, bLines.join('\n'));
+        }
+        if (document.isDirty) {
+          await document.save();
+        }
+        sendUpdate();
+        vscode.window.setStatusBarMessage('Anti Markdown: 已接受此段修改', 2500);
+        break;
+      }
+
+      case 'rejectDiffHunk': {
+        try {
+          await vscode.commands.executeCommand('antigravity.prioritized.agentRejectFocusedHunk');
+        } catch (_e) {}
+        if (msg.hunk && typeof msg.hunk.startModLine === 'number') {
+          isApplyingEditFromWebview = true;
+          try {
+            const lines = document.getText().replace(/\r\n/g, '\n').split('\n');
+            const count = Math.max(0, msg.hunk.endModLine - msg.hunk.startModLine + 1);
+            lines.splice(msg.hunk.startModLine, count, ...(msg.hunk.deletedTexts || []));
+            const newText = lines.join('\n');
+            const fullRange = new vscode.Range(
+              document.positionAt(0),
+              document.positionAt(document.getText().length)
+            );
+            const edit = new vscode.WorkspaceEdit();
+            edit.replace(document.uri, fullRange, newText);
+            await vscode.workspace.applyEdit(edit);
+            await document.save();
+          } finally {
+            isApplyingEditFromWebview = false;
+          }
+        }
+        sendUpdate();
+        vscode.window.setStatusBarMessage('Anti Markdown: 已还原此段修改', 2500);
+        break;
+      }
+
       default:
         break;
     }
@@ -1310,6 +1662,9 @@ module.exports = {
   deactivate,
   normalizeMarkdownUri,
   detectCascadeId,
-  parseAndValidateFileTarget
+  parseAndValidateFileTarget,
+  computeFastLineDiff,
+  computeDocumentDiff,
+  getGitHeadContent
 };
 

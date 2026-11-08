@@ -1466,3 +1466,231 @@ body.vscode-light .agy-mermaid-stage svg {
   gap: 8px;
 }
 
+/* ==========================================================================
+   AI Diff Review & Hunk Action Banner (Matching Antigravity IDE Raw Editor)
+   ========================================================================== */
+
+.agy-diff-sticky-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 16px;
+  background-color: color-mix(in srgb, var(--agy-surface) 92%, #000 8%);
+  border-bottom: 1px solid var(--agy-border-strong);
+  position: sticky;
+  top: 0;
+  z-index: 85;
+  backdrop-filter: blur(8px);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.25);
+  font-size: 12px;
+  animation: agyDiffFadeIn 0.2s ease-out;
+}
+
+@keyframes agyDiffFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.agy-diff-sticky-left,
+.agy-diff-sticky-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.agy-diff-sticky-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  background: rgba(59, 130, 246, 0.16);
+  color: #60a5fa;
+  border: 1px solid rgba(96, 165, 250, 0.32);
+}
+
+.agy-diff-nav-count {
+  font-size: 11px;
+  color: var(--agy-fg-muted);
+  font-family: var(--agy-font-mono);
+}
+
+.agy-diff-nav-btn {
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--agy-border);
+  background: transparent;
+  color: var(--agy-fg-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.agy-diff-nav-btn:hover {
+  background: var(--agy-surface-elevated);
+  color: var(--agy-fg);
+  border-color: var(--agy-border-strong);
+}
+
+/* Inline Hunk Action Banner (Matching IDE: ✓ Accept | ✕ Reject | +3 lines, -6 lines) */
+.agy-diff-hunk-banner {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  margin: 8px 0 6px 0;
+  background-color: color-mix(in srgb, var(--agy-surface) 86%, #000 14%);
+  border: 1px solid color-mix(in srgb, var(--agy-border-strong) 75%, #60a5fa 25%);
+  border-radius: 5px;
+  font-family: var(--agy-font-sans);
+  font-size: 12px;
+  line-height: 18px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  user-select: none;
+  z-index: 5;
+}
+
+.agy-diff-action-btn {
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 1px 6px;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.agy-diff-btn-accept {
+  color: var(--vscode-textLink-foreground, #60a5fa);
+}
+
+.agy-diff-btn-accept:hover {
+  color: #93c5fd;
+  background: rgba(59, 130, 246, 0.2);
+  text-decoration: underline;
+}
+
+.agy-diff-btn-reject {
+  color: var(--agy-fg-muted);
+}
+
+.agy-diff-btn-reject:hover {
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.2);
+  text-decoration: underline;
+}
+
+.agy-diff-sep {
+  color: var(--agy-fg-subtle);
+  font-size: 11px;
+  user-select: none;
+}
+
+.agy-diff-stat-add {
+  color: #4ade80;
+  font-weight: 600;
+  font-family: var(--agy-font-mono);
+  font-size: 11.5px;
+}
+
+.agy-diff-stat-comma {
+  color: var(--agy-fg-subtle);
+  user-select: none;
+}
+
+.agy-diff-stat-del {
+  color: #f87171;
+  font-weight: 600;
+  font-family: var(--agy-font-mono);
+  font-size: 11.5px;
+}
+
+/* Green Background Highlight on Modified/Added AST Blocks */
+.agy-diff-added {
+  background-color: rgba(34, 197, 94, 0.14) !important;
+  border-left: 3px solid #22c55e !important;
+  border-radius: 4px;
+  padding-left: 8px !important;
+  margin-left: -11px !important;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+/* Deleted Lines Display Box */
+.agy-diff-deleted-container {
+  margin: 6px 0 8px 0;
+  padding: 6px 12px;
+  background-color: rgba(239, 68, 68, 0.10);
+  border-left: 3px solid #ef4444;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.agy-diff-deleted-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #f87171;
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 4px;
+  user-select: none;
+}
+
+.agy-diff-del-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  background: #ef4444;
+  color: #ffffff;
+  border-radius: 3px;
+  font-size: 12px;
+  line-height: 1;
+  font-weight: bold;
+}
+
+.agy-diff-del-label {
+  color: #f87171;
+}
+
+.agy-diff-deleted-content {
+  margin: 0;
+  color: #fca5a5;
+  text-decoration: line-through;
+  opacity: 0.88;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--agy-font-mono);
+  font-size: 12px;
+}
+
+.agy-block-btn-accept {
+  color: #60a5fa !important;
+  border-color: rgba(96, 165, 250, 0.35) !important;
+}
+
+.agy-block-btn-accept:hover {
+  background: rgba(59, 130, 246, 0.2) !important;
+}
+
+.agy-block-btn-reject {
+  color: #f87171 !important;
+  border-color: rgba(239, 68, 68, 0.35) !important;
+}
+
+.agy-block-btn-reject:hover {
+  background: rgba(239, 68, 68, 0.2) !important;
+}
+

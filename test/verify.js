@@ -356,7 +356,49 @@ function runVerificationSuite() {
     console.log(`✓ Verified compatibility with django_orm_complete_guide.md (${brainAst.headings.length} headings, ${mermaidCount} Mermaid diagrams, ${alertCount} Alerts, ${tableCount} Tables)`);
   }
 
-  console.log('=== 5. Packaging VSIX Archive ===');
+  console.log('=== 5. Testing AI Diff Review Engine & Hunk Algorithm ===');
+  const ext = require(path.join(ROOT, 'out', 'extension.js'));
+  assert.strictEqual(typeof ext.computeFastLineDiff, 'function', 'computeFastLineDiff must be exported');
+
+  // Test Case A: Exact match with user screenshot scenario (+3 lines, -6 lines)
+  const origText = 'Title\nOld Line 1\nOld Line 2\nOld Line 3\nOld Line 4\nOld Line 5\nOld Line 6\nFooter\n';
+  const modText = 'Title\n- **所见即所得的原位编辑**: 直接在渲染视图中双击任意文字块\nLine 2 added\nLine 3 added\nFooter\n';
+  const diffRes = ext.computeFastLineDiff(origText, modText);
+
+  assert.strictEqual(diffRes.hasDiff, true, 'Diff must be detected');
+  assert.strictEqual(diffRes.addedCount, 3, 'Added count must match 3 lines');
+  assert.strictEqual(diffRes.removedCount, 6, 'Removed count must match 6 lines');
+  assert.strictEqual(diffRes.hunks.length, 1, 'Should group into exactly 1 hunk');
+  assert.strictEqual(diffRes.hunks[0].addedCount, 3);
+  assert.strictEqual(diffRes.hunks[0].removedCount, 6);
+  assert.strictEqual(diffRes.hunks[0].startModLine, 1);
+  assert.strictEqual(diffRes.hunks[0].endModLine, 3);
+
+  // Test Case B: Identical text
+  const noDiff = ext.computeFastLineDiff('Hello world\nSecond line\n', 'Hello world\nSecond line\n');
+  assert.strictEqual(noDiff.hasDiff, false, 'No diff when text is identical');
+  assert.strictEqual(noDiff.addedCount, 0);
+  assert.strictEqual(noDiff.removedCount, 0);
+
+  // Test Case C: Multiple hunks & hunk reverting
+  const multiOrig = 'A\nB1\nB2\nC\nD1\nE\n';
+  const multiMod = 'A\nB_NEW\nC\nD_NEW\nE\n';
+  const multiDiff = ext.computeFastLineDiff(multiOrig, multiMod);
+  assert.strictEqual(multiDiff.hunks.length, 2, 'Should detect 2 distinct hunks');
+
+  // Revert hunk 0:
+  const linesMod = multiMod.split('\n');
+  const h0 = multiDiff.hunks[0];
+  const count0 = Math.max(0, h0.endModLine - h0.startModLine + 1);
+  linesMod.splice(h0.startModLine, count0, ...h0.deletedTexts);
+  const revertedHunk0Text = linesMod.join('\n');
+  const diffAfterRevert0 = ext.computeFastLineDiff(multiOrig, revertedHunk0Text);
+  assert.strictEqual(diffAfterRevert0.hunks.length, 1, 'After reverting hunk 0, only hunk 1 remains');
+  assert.strictEqual(diffAfterRevert0.hunks[0].addedTexts[0], 'D_NEW');
+
+  console.log('✓ Verified computeFastLineDiff (+3 lines, -6 lines scenario), hunk grouping & hunk revert');
+
+  console.log('=== 6. Packaging VSIX Archive ===');
   const vsixPath = packageVsix(pkg);
   const vsixSize = fs.statSync(vsixPath).size;
   assert.ok(vsixSize > 5000, 'VSIX package should be non-empty');
