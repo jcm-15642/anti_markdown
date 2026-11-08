@@ -755,7 +755,7 @@ function registerUniversalSelectionCapsule(context) {
 
   context.subscriptions.push(
     vscode.languages.registerHoverProvider(
-      [{ pattern: '**/*' }, { scheme: 'file' }, { scheme: 'untitled' }, { scheme: 'vscode-remote' }, { scheme: 'vscode-vfs' }],
+      [{ scheme: '*' }, { pattern: '**/*' }, { pattern: '**' }],
       {
         provideHover(document, position) {
           const editor = vscode.window.activeTextEditor;
@@ -766,7 +766,9 @@ function registerUniversalSelectionCapsule(context) {
           const startLine0 = sel.start.line;
           const endLine0 = sel.end.character === 0 && sel.end.line > startLine0 ? sel.end.line - 1 : sel.end.line;
 
-          if (position.line < startLine0 || position.line > endLine0) {
+          // Accept hover on any line of the active selection (including the trailing boundary)
+          const maxLine0 = Math.max(endLine0, sel.end.line);
+          if (position.line < startLine0 || position.line > maxLine0) {
             return null;
           }
 
@@ -785,19 +787,28 @@ function registerUniversalSelectionCapsule(context) {
             const meta = AI_PLATFORM_META[id];
             const pillUri = PLATFORM_PILL_DATA_URIS[id];
             const width = PLATFORM_PILL_WIDTHS[id] || 88;
-            return `[<img src="${pillUri}" width="${width}" height="24" alt="${meta.label}" />](command:antiMarkdown.sendSelectionTo.${id} "仅发送到 ${meta.label} 聊天框")`;
+            return `[<img src="${pillUri}" width="${width}" height="24" alt="${meta.label}" style="display:inline-block;vertical-align:middle;" />](command:antiMarkdown.sendSelectionTo.${id} "仅发送到 ${meta.label} 聊天框")`;
           });
 
           const md = new vscode.MarkdownString(
-            `<img src="${rangeBadge.uri}" width="${rangeBadge.width}" height="24" /> &nbsp;${pills.join(' &nbsp;')}`,
+            `<div style="display:inline-flex;align-items:center;height:24px;line-height:24px;white-space:nowrap;"><img src="${rangeBadge.uri}" width="${rangeBadge.width}" height="24" style="display:inline-block;vertical-align:middle;" />&nbsp;${pills.join('&nbsp;')}&nbsp;</div>`,
             true
           );
           md.supportHtml = true;
           md.isTrusted = true;
 
-          const endLineText = document.lineAt(endLine0).text;
-          const fullRange = new vscode.Range(startLine0, 0, endLine0, endLineText.length);
-          return new vscode.Hover(md, fullRange);
+          // Determine placement to guarantee the capsule NEVER covers the selected text:
+          // Check visible viewport: if >= 2 visible lines exist above the selection, anchor at startLine0 (placed ABOVE).
+          // If the selection is near the top of the viewport (< 2 lines above), anchor at endLine0 (placed BELOW).
+          // A 0-width Range ensures ZERO distracting grey hover highlight over the user's text.
+          const visibleRanges = editor.visibleRanges;
+          const firstVisibleLine = visibleRanges && visibleRanges.length > 0 ? visibleRanges[0].start.line : 0;
+          const hasRoomAbove = (startLine0 - firstVisibleLine) >= 2;
+
+          const anchorLine = hasRoomAbove ? startLine0 : endLine0;
+          const anchorChar = hasRoomAbove ? sel.start.character : sel.end.character;
+          const anchorPos = new vscode.Position(anchorLine, anchorChar);
+          return new vscode.Hover(md, new vscode.Range(anchorPos, anchorPos));
         }
       }
     ),
@@ -819,9 +830,11 @@ function registerUniversalSelectionCapsule(context) {
         if (active && !active.selection.isEmpty) {
           vscode.commands
             .executeCommand('editor.action.showHover', { focus: 'noAutoFocus' })
-            .then(undefined, () => {});
+            .then(undefined, () => {
+              vscode.commands.executeCommand('editor.action.showHover').then(undefined, () => {});
+            });
         }
-      }, 100);
+      }, 160);
     }),
     vscode.workspace.onDidChangeConfiguration((ev) => {
       if (ev.affectsConfiguration('antiMarkdown')) {
