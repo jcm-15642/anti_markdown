@@ -796,17 +796,35 @@ function registerUniversalSelectionCapsule(context) {
           );
           md.isTrusted = true;
 
-          // Anchor at the trailing end of the selection with a 0-width Range:
-          // 1. Horizontally, the hover aligns at anchorCol (at or to the right of the selected text),
-          //    leaving the entire selected text uncovered to the left.
-          // 2. If the selection ends with newline (column 0 on next line), anchor at the end of the selected line.
-          // 3. A 0-width Range completely eliminates Monaco's grey hover highlight over the text.
-          let anchorLine = endLine0;
-          let anchorCol = sel.end.character;
-          if (sel.end.character === 0 && sel.end.line > startLine0) {
+          const isMultiLine = endLine0 > startLine0;
+          const visibleRanges = editor.visibleRanges;
+          const firstVisibleLine = visibleRanges && visibleRanges.length > 0 ? visibleRanges[0].start.line : 0;
+          const hasRoomAbove = (startLine0 - firstVisibleLine) >= 2;
+
+          let anchorLine;
+          let anchorCol;
+
+          if (isMultiLine) {
+            if (hasRoomAbove) {
+              // Multi-line selection with room above: anchor at the start line.
+              // Monaco places the hover ABOVE startLine0 (on line startLine0 - 1).
+              // Neither the last line nor any line above it inside the selection is covered.
+              anchorLine = startLine0;
+              anchorCol = sel.start.character;
+            } else {
+              // Multi-line selection at top of viewport: anchor at the end of the last line in empty right space
+              anchorLine = endLine0;
+              anchorCol = document.lineAt(endLine0).text.length;
+            }
+          } else {
+            // Single-line selection: anchor at the trailing end of the selection
             anchorLine = endLine0;
-            anchorCol = document.lineAt(endLine0).text.length;
+            anchorCol = sel.end.character;
+            if (sel.end.character === 0 && sel.end.line > startLine0) {
+              anchorCol = document.lineAt(endLine0).text.length;
+            }
           }
+
           const anchorPos = new vscode.Position(anchorLine, anchorCol);
           return new vscode.Hover(md, new vscode.Range(anchorPos, anchorPos));
         }
@@ -824,6 +842,8 @@ function registerUniversalSelectionCapsule(context) {
         vscode.commands.executeCommand('editor.action.hideHover').then(undefined, () => {});
         return;
       }
+      // Snappy 60ms debounce: provides instant responsiveness across all file types
+      // while preventing mouse drag jitter
       hoverTimer = setTimeout(() => {
         hoverTimer = null;
         const active = vscode.window.activeTextEditor;
@@ -832,7 +852,7 @@ function registerUniversalSelectionCapsule(context) {
             .executeCommand('editor.action.showHover', { focus: 'noAutoFocus' })
             .then(undefined, () => {});
         }
-      }, 160);
+      }, 60);
     }),
     vscode.workspace.onDidChangeConfiguration((ev) => {
       if (ev.affectsConfiguration('antiMarkdown')) {
