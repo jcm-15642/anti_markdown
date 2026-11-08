@@ -381,7 +381,6 @@ function createDocumentPayload(document, webview, isSidePreview) {
     isSidePreview: Boolean(isSidePreview),
     lastModified,
     config: {
-      defaultViewMode: config.get('defaultViewMode', 'preview'),
       showOutline: config.get('showOutline', true),
       enabledAiPlatforms
     }

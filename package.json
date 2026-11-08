@@ -2,7 +2,7 @@
   "name": "anti-markdown",
   "displayName": "Anti Markdown",
   "description": "Anti Markdown - Modern Markdown live editor and rich renderer with Mermaid diagrams, KaTeX math, GitHub alerts, Carousels, and universal selection AI capsule for VS Code / Antigravity IDE.",
-  "version": "1.7.4",
+  "version": "1.7.5",
   "publisher": "mazhao",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -220,21 +220,11 @@
             "native"
           ],
           "enumDescriptions": [
-            "Use the built-in Antigravity Artifact Viewer Pro (supports real-time unsaved buffer sync, split editing, TOC outline, Mermaid, Alerts, Carousels, KaTeX, file:// pills, and one-click switch to native viewer).",
+            "Use the built-in Anti Markdown Editor (supports in-place live editing, TOC outline, Mermaid, Alerts, Carousels, KaTeX, file:// pills, and one-click switch to native viewer).",
             "Automatically delegate *.md custom editor tabs to Antigravity IDE's native internal antigravity.artifactEditor."
           ],
           "default": "standalone",
-          "description": "Select which engine powers the Antigravity Artifact Viewer custom editor."
-        },
-        "antiMarkdown.defaultViewMode": {
-          "type": "string",
-          "enum": [
-            "preview",
-            "split",
-            "source"
-          ],
-          "default": "preview",
-          "description": "Default view mode when opening a Markdown file in Antigravity Artifact Viewer Pro."
+          "description": "Select which engine powers the Anti Markdown custom editor."
         },
         "antiMarkdown.showOutline": {
           "type": "boolean",

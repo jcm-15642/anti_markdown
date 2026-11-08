@@ -7,12 +7,9 @@
 ## 插件特色与核心功能
 
 ### 1. 实时渲染与原位双击编辑 (In-Place Live Editing)
-- **所见即所得的直接编辑**：在预览模式下即可双击任意文字块、段落直接进入原位编辑，光标精准定位在鼠标点击位置。
-- **三视图无缝切换**：
-  - **预览视图 (Preview)**：纯净的富文本渲染模式；
-  - **分栏编辑视图 (Split)**：左侧源码实时编辑、右侧即时高保真渲染；
-  - **源码视图 (Source)**：经典 Markdown 源码编辑。
-- **可折叠目录大纲 (TOC Outline)**：自动提取全文标题层级，支持侧边大纲一键跳转与平滑滚动定位。
+- **所见即所得的原位编辑**：直接在渲染视图中双击任意文字块、段落或标题即可原地进入编辑状态，光标精准定位在鼠标点击位置；编辑完成后自动实时渲染并保存更改。
+- **快捷切换源码与预览**：通过快捷键 `Ctrl+Alt+M`（Mac 为 `Cmd+Alt+M`）或编辑器右上角切换图标，可随时在 Anti Markdown 富文本视图与 VS Code 原始纯文本编辑器之间一键平滑切换。
+- **可折叠目录大纲 (TOC Outline)**：自动提取全文标题层级，右上角点击“☰ 目录大纲”可随时展开或折叠大纲面板，支持一键点击平滑滚动跳转。
 
 ### 2. 全能 Markdown 扩展语法支持
 - **内置 Mermaid 交互矢量图表**：
@@ -53,7 +50,7 @@
 | :--- | :--- | :--- |
 | **切换 Markdown 源码 / Anti Markdown 预览** | `Ctrl+Alt+M`（Mac: `Cmd+Alt+M`）或点击编辑器右上角切换图标 | `antiMarkdown.switchEditor` |
 | **侧边栏打开 Antigravity 原生内置预览** | `Ctrl+Alt+V`（Mac: `Cmd+Alt+V`）或点击编辑器右上角图标 | `antiMarkdown.openNativeArtifactToSide` |
-| **侧边栏打开实时同步预览 (Pro)** | 点击编辑器右上角分栏预览图标 | `antiMarkdown.openPreviewToSide` |
+| **侧边栏打开实时同步预览** | 点击编辑器右上角侧边预览图标 | `antiMarkdown.openPreviewToSide` |
 | **在当前标签页用原生内置编辑器打开** | 资源管理器右键 `.md` 文件 -> `使用 Antigravity 原生内置编辑器打开` | `antiMarkdown.openNativeArtifact` |
 | **使用 Anti Markdown 编辑器打开** | 资源管理器右键 `.md` 文件 -> `使用 Antigravity 增强型编辑器打开` | `antiMarkdown.openStandaloneViewer` |
 | **选择打开方式 (`Open With...`)** | 资源管理器右键 `.md` 文件 -> `打开方式... (Open With...)` -> 选择 **Anti Markdown Editor (Pro)** | - |
@@ -67,7 +64,6 @@
 
 | 配置项 | 类型 | 默认值 | 说明 |
 | :--- | :--- | :--- | :--- |
-| `antiMarkdown.defaultViewMode` | `string` | `"preview"` | 打开 Markdown 文件时的默认视图模式（可选 `preview`, `split`, `source`） |
 | `antiMarkdown.showOutline` | `boolean` | `true` | 是否默认在侧边栏显示可折叠目录大纲 (TOC) |
 | `antiMarkdown.enabledAiPlatforms` | `array` | `["vscode", "antigravity", "claude", "codex"]` | 悬浮胶囊及顶栏中启用的 AI 发送平台列表 |
 | `antiMarkdown.selectionHoverCapsule` | `boolean` | `true` | 是否在所有代码编辑器中启用文本选中的浮动 AI 发送胶囊 |
@@ -79,21 +75,21 @@
 
 ### 方式一：直接下载 VSIX 安装包（推荐）
 1. 前往 GitHub Releases 页面下载最新安装包：
-   - 👉 **[下载最新版本 anti-markdown-1.7.4.vsix](https://github.com/jcm-15642/anti_markdown/releases/download/v1.7.4/anti-markdown-1.7.4.vsix)**
-   - 或在仓库中直接下载：[`anti-markdown-1.7.4.vsix`](https://github.com/jcm-15642/anti_markdown/raw/main/anti-markdown-1.7.4.vsix)
+   - 👉 **[下载最新版本 anti-markdown-1.7.5.vsix](https://github.com/jcm-15642/anti_markdown/releases/download/v1.7.5/anti-markdown-1.7.5.vsix)**
+   - 或在仓库中直接下载：[`anti-markdown-1.7.5.vsix`](https://github.com/jcm-15642/anti_markdown/raw/main/anti-markdown-1.7.5.vsix)
 2. **在编辑器中安装**：
    - 打开 VS Code / Antigravity IDE 扩展面板 (`Ctrl+Shift+X` / `Cmd+Shift+X`)；
    - 点击右上角 `...` 菜单，选择 **从 VSIX 安装... (Install from VSIX...)**；
-   - 选择下载好的 `anti-markdown-1.7.4.vsix` 即可完成安装。
+   - 选择下载好的 `anti-markdown-1.7.5.vsix` 即可完成安装。
 
 ### 方式二：命令行一键安装
 下载 `.vsix` 文件后，在终端执行以下命令之一：
 ```bash
 # VS Code
-code --install-extension anti-markdown-1.7.4.vsix
+code --install-extension anti-markdown-1.7.5.vsix
 
 # Antigravity IDE
-agy --install-extension anti-markdown-1.7.4.vsix
+agy --install-extension anti-markdown-1.7.5.vsix
 ```
 
 ### 方式三：从源码构建并安装
@@ -106,5 +102,5 @@ cd anti_markdown
 npm test
 
 # 安装生成的 vsix 包
-code --install-extension anti-markdown-1.7.4.vsix
+code --install-extension anti-markdown-1.7.5.vsix
 ```
