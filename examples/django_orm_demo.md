@@ -144,7 +144,7 @@ $$
 
 ---
 
-## 5. 特性对比表与交互式任务清单
+## 5. 特性对比表与交互式任务清单d's'f's
 
 | 特性维度 | VS Code 默认侧边栏预览 | Antigravity 原生桥接模式 (`jetski`) | Antigravity Artifact Viewer Pro (本插件默认) |
 | :--- | :---: | :---: | :---: |

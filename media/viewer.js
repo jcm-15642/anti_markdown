@@ -2516,12 +2516,99 @@
   }
 
   /**
+   * Create an interactive insert divider line (+ 插入内容) between blocks or at the end/start.
+   * Clicking it opens an empty inline editor without inserting any placeholder text.
+   */
+  function createInsertDivider(insertLineIndex, callbacks, container) {
+    const divider = el('div', 'agy-insert-divider', null, {
+      title: '点击在此处插入新 Markdown 内容'
+    });
+    const btn = el('button', 'agy-insert-btn', '+ 插入内容');
+    divider.appendChild(btn);
+
+    const onTriggerInsert = (ev) => {
+      ev.stopPropagation();
+      const existing = container.querySelector('.agy-new-block-editor');
+      if (existing) {
+        const ta = existing.querySelector('textarea');
+        if (ta) ta.focus();
+        return;
+      }
+
+      const insertWrapper = el('div', 'agy-editable-block is-editing-inplace agy-new-block-editor');
+      const textarea = el('textarea', 'agy-inplace-editor', '', {
+        placeholder: '在此输入 Markdown 内容（按 Esc 或点击外部保存，支持公式、Mermaid、段落）...'
+      });
+      textarea.rows = 2;
+      insertWrapper.appendChild(textarea);
+      divider.parentElement.insertBefore(insertWrapper, divider.nextSibling);
+
+      const autoFitHeight = () => {
+        textarea.style.height = 'auto';
+        if (textarea.scrollHeight > 0) {
+          textarea.style.height = `${textarea.scrollHeight}px`;
+        }
+      };
+      autoFitHeight();
+      textarea.focus();
+
+      let finished = false;
+      const finishInsert = (save) => {
+        if (finished) return;
+        finished = true;
+        if (typeof document !== 'undefined' && document.removeEventListener) {
+          document.removeEventListener('mousedown', onOutsideClick, true);
+        }
+        const val = textarea.value.trim();
+        insertWrapper.remove();
+        if (save && val) {
+          if (callbacks && typeof callbacks.onInsertMarkdownBlock === 'function') {
+            callbacks.onInsertMarkdownBlock(insertLineIndex, val);
+          }
+        }
+      };
+
+      const onOutsideClick = (e) => {
+        if (!insertWrapper.contains(e.target) && e.target !== btn) {
+          finishInsert(true);
+        }
+      };
+
+      if (typeof document !== 'undefined' && document.addEventListener) {
+        document.addEventListener('mousedown', onOutsideClick, true);
+      }
+
+      textarea.addEventListener('input', autoFitHeight);
+      textarea.addEventListener('blur', () => {
+        setTimeout(() => finishInsert(true), 20);
+      });
+      textarea.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') {
+          e.preventDefault();
+          finishInsert(false);
+        } else if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+          e.preventDefault();
+          finishInsert(true);
+        }
+      });
+    };
+
+    divider.addEventListener('click', onTriggerInsert);
+    btn.addEventListener('click', onTriggerInsert);
+    return divider;
+  }
+
+  /**
    * Render an array of AST blocks into a container DOM element with in-preview live editing wrappers.
    * @param {HTMLElement} container
    * @param {Array<any>} blocks
    * @param {object} callbacks
    */
   function renderBlocksIntoDom(container, blocks, callbacks) {
+    if (blocks.length > 0) {
+      container.appendChild(createInsertDivider(blocks[0].startLine, callbacks, container));
+    }
+
     for (let i = 0; i < blocks.length; i++) {
       const block = blocks[i];
       const startLine1 = (block.startLine || 0) + 1;
@@ -2536,7 +2623,7 @@
       // Hover Action Toolbar (Direct Edit + Send to Chat, positioned outside the block box)
       const toolbar = el('div', 'agy-block-toolbar');
       const editBtn = el('button', 'agy-block-btn', '✎ 直接编辑', {
-        title: '在预览界面直接编辑此块并实时渲染 (或直接点击文本段落)'
+        title: '在预览界面直接编辑此块并实时渲染 (或双击此块)'
       });
       const chatBtn = el('button', 'agy-block-btn', `📌 引用 L${startLine1}-${endLine1}`, {
         title: '将此段落文件与行号添加到当前开启的 AI 聊天框'
@@ -2558,7 +2645,7 @@
         block.type === 'carousel';
 
       // Mode 1: True In-Place Editing at Original Position (for heading, paragraph, alert, blockquote, list)
-      const startTrueInPlaceEditing = () => {
+      const startTrueInPlaceEditing = (ev) => {
         if (wrapper.classList.contains('is-editing-inplace') || wrapper.classList.contains('is-editing')) {
           return;
         }
@@ -2619,6 +2706,41 @@
           initialValue = currentSlice;
         }
 
+        // Calculate cursor position from mouse click position before hostEl DOM is replaced
+        let targetCursorPos = -1;
+        if (ev && typeof ev.clientX === 'number' && typeof document !== 'undefined') {
+          try {
+            let clickRange = null;
+            if (document.caretRangeFromPoint) {
+              clickRange = document.caretRangeFromPoint(ev.clientX, ev.clientY);
+            } else if (document.caretPositionFromPoint) {
+              const pos = document.caretPositionFromPoint(ev.clientX, ev.clientY);
+              if (pos && pos.offsetNode) {
+                clickRange = document.createRange();
+                clickRange.setStart(pos.offsetNode, pos.offset);
+                clickRange.collapse(true);
+              }
+            }
+            if (clickRange && hostEl.contains(clickRange.startContainer)) {
+              const preRange = document.createRange();
+              preRange.selectNodeContents(hostEl);
+              preRange.setEnd(clickRange.startContainer, clickRange.startOffset);
+              const textBefore = preRange.toString();
+              if (textBefore && initialValue.includes(textBefore)) {
+                targetCursorPos = initialValue.indexOf(textBefore) + textBefore.length;
+              } else if (textBefore) {
+                const tail = textBefore.slice(-8);
+                const subIdx = initialValue.indexOf(tail);
+                targetCursorPos = subIdx !== -1 ? subIdx + tail.length : textBefore.length;
+              } else {
+                targetCursorPos = 0;
+              }
+            }
+          } catch (_err) {
+            targetCursorPos = -1;
+          }
+        }
+
         const inplaceInput = el('textarea', 'agy-inplace-editor', null, {
           rows: Math.max(1, initialValue.split('\n').length)
         });
@@ -2634,6 +2756,13 @@
         hostEl.replaceChildren(inplaceInput);
         autoFitHeight();
         inplaceInput.focus();
+
+        if (targetCursorPos >= 0) {
+          const safePos = Math.min(inplaceInput.value.length, Math.max(0, targetCursorPos));
+          inplaceInput.setSelectionRange(safePos, safePos);
+        } else {
+          inplaceInput.setSelectionRange(inplaceInput.value.length, inplaceInput.value.length);
+        }
 
         let activeStart = block.startLine;
         let activeEnd = block.endLine;
@@ -2669,8 +2798,8 @@
           }
         };
 
-        const onOutsideMouseDown = (ev) => {
-          if (!wrapper.contains(ev.target)) {
+        const onOutsideMouseDown = (e) => {
+          if (!wrapper.contains(e.target)) {
             finishInPlace();
           }
         };
@@ -2685,10 +2814,10 @@
           }, 10);
         });
 
-        inplaceInput.addEventListener('keydown', (ev) => {
-          if (ev.key === 'Escape' || ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter')) {
-            ev.preventDefault();
-            ev.stopPropagation();
+        inplaceInput.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape' || ((e.ctrlKey || e.metaKey) && e.key === 'Enter')) {
+            e.preventDefault();
+            e.stopPropagation();
             finishInPlace();
           }
         });
@@ -2757,8 +2886,8 @@
           }
         };
 
-        const onOutsideMouseDown = (ev) => {
-          if (!wrapper.contains(ev.target)) {
+        const onOutsideMouseDown = (e) => {
+          if (!wrapper.contains(e.target)) {
             finishEditing();
           }
         };
@@ -2767,40 +2896,40 @@
           document.addEventListener('mousedown', onOutsideMouseDown, true);
         }
 
-        textarea.addEventListener('blur', (ev) => {
+        textarea.addEventListener('blur', (e) => {
           setTimeout(() => {
-            if (ev && ev.relatedTarget && wrapper.contains(ev.relatedTarget)) {
+            if (e && e.relatedTarget && wrapper.contains(e.relatedTarget)) {
               return;
             }
             finishEditing();
           }, 20);
         });
 
-        doneBtn.addEventListener('click', (ev) => {
-          ev.stopPropagation();
+        doneBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
           finishEditing();
         });
 
-        textarea.addEventListener('keydown', (ev) => {
-          if (ev.key === 'Escape' || ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter')) {
-            ev.preventDefault();
-            ev.stopPropagation();
+        textarea.addEventListener('keydown', (e) => {
+          if (e.key === 'Escape' || ((e.ctrlKey || e.metaKey) && e.key === 'Enter')) {
+            e.preventDefault();
+            e.stopPropagation();
             finishEditing();
           }
         });
       };
 
-      const startInPlaceEditing = () => {
+      const startInPlaceEditing = (ev) => {
         if (isComplexVisualBlock) {
           startBoxLiveEditing();
         } else {
-          startTrueInPlaceEditing();
+          startTrueInPlaceEditing(ev);
         }
       };
 
       editBtn.addEventListener('click', (ev) => {
         ev.stopPropagation();
-        startInPlaceEditing();
+        startInPlaceEditing(null);
       });
 
       chatBtn.addEventListener('click', (ev) => {
@@ -2810,29 +2939,24 @@
         }
       });
 
-      // Click directly on regular content blocks (when not dragging a text selection) to edit directly in-place!
-      wrapper.addEventListener('click', (ev) => {
+      // Regular blocks require double click to edit in place, positioning cursor directly at click
+      wrapper.addEventListener('dblclick', (ev) => {
         if (wrapper.classList.contains('is-editing') || wrapper.classList.contains('is-editing-inplace')) return;
-        const sel = typeof window !== 'undefined' && window.getSelection ? String(window.getSelection()).trim() : '';
-        if (sel.length > 0) return;
         const targetTag = (ev.target && ev.target.tagName ? ev.target.tagName : '').toLowerCase();
         if (targetTag === 'a' || targetTag === 'button' || targetTag === 'input' || targetTag === 'textarea') {
           return;
         }
-        if (!isComplexVisualBlock && block.type !== 'hr') {
-          startTrueInPlaceEditing();
-        }
-      });
-
-      wrapper.addEventListener('dblclick', (ev) => {
-        if (wrapper.classList.contains('is-editing') || wrapper.classList.contains('is-editing-inplace')) return;
-        const sel = typeof window !== 'undefined' && window.getSelection ? String(window.getSelection()).trim() : '';
-        if (sel.length > 0 && !isComplexVisualBlock) return;
         ev.stopPropagation();
-        startInPlaceEditing();
+        startInPlaceEditing(ev);
       });
 
       container.appendChild(wrapper);
+      const nextInsertLine = block.endLine !== undefined ? block.endLine + 1 : (block.startLine || 0) + 1;
+      container.appendChild(createInsertDivider(nextInsertLine, callbacks, container));
+    }
+
+    if (blocks.length === 0) {
+      container.appendChild(createInsertDivider(0, callbacks, container));
     }
   }
 
@@ -3259,6 +3383,14 @@
         if (vscode) {
           vscode.postMessage({ type: 'copyText', text });
         }
+      },
+      onInsertMarkdownBlock(lineIndex, newMarkdown) {
+        const lines = state.text.replace(/\r\n/g, '\n').split('\n');
+        const cleanNew = newMarkdown.replace(/\r\n/g, '\n').split('\n');
+        const target = Math.min(lines.length, Math.max(0, lineIndex));
+        lines.splice(target, 0, '', ...cleanNew);
+        pushTextEditToExtension(lines.join('\n'), true);
+        renderDocument();
       }
     };
 
@@ -3297,26 +3429,6 @@
       }
 
       renderBlocksIntoDom(docContainer, ast.blocks, callbacks);
-
-      // Append New Block Area at bottom of Preview for seamless continuation
-      const appendBox = el(
-        'div',
-        'agy-append-area',
-        '+ 点击此处直接在预览界面底部追加 Markdown 内容（支持实时渲染公式、Mermaid 与段落）...'
-      );
-      appendBox.addEventListener('click', () => {
-        const totalLines = state.text ? state.text.split('\n').length : 0;
-        const nextText = state.text ? `${state.text.replace(/\s+$/, '')}\n\n新段落内容...` : '新段落内容...';
-        pushTextEditToExtension(nextText);
-        renderDocument();
-        const editableBlocks = docContainer.querySelectorAll('.agy-editable-block');
-        if (editableBlocks.length > 0) {
-          const lastBlock = editableBlocks[editableBlocks.length - 1];
-          const editBtn = lastBlock.querySelector('.agy-block-btn');
-          if (editBtn) editBtn.click();
-        }
-      });
-      docContainer.appendChild(appendBox);
     }
 
     window.addEventListener('message', (event) => {

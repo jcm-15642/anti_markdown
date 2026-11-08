@@ -1271,20 +1271,63 @@ body.vscode-light .agy-mermaid-stage svg {
   display: block;
 }
 
-.agy-append-area {
-  margin-top: 28px;
-  padding: 10px 14px;
-  border-radius: 8px;
-  border: 1px dashed var(--agy-border-strong);
-  color: var(--agy-fg-subtle);
-  font-size: 12.5px;
-  cursor: text;
-  transition: border-color 0.15s ease, color 0.15s ease;
+.agy-insert-divider {
+  position: relative;
+  height: 14px;
+  margin: -7px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  z-index: 25;
+  opacity: 0;
+  transition: opacity 0.15s ease;
 }
 
-.agy-append-area:hover {
-  border-color: var(--agy-accent);
-  color: var(--agy-fg-muted);
+.agy-insert-divider:hover,
+.agy-insert-divider:focus-within {
+  opacity: 1;
+}
+
+.agy-insert-divider::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background-color: color-mix(in srgb, var(--agy-accent) 55%, var(--agy-border));
+  box-shadow: 0 0 6px color-mix(in srgb, var(--agy-accent) 35%, transparent);
+}
+
+.agy-insert-btn {
+  position: relative;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 10px;
+  border-radius: 12px;
+  background-color: var(--agy-surface-elevated);
+  border: 1px solid color-mix(in srgb, var(--agy-accent) 45%, var(--agy-border));
+  color: var(--agy-accent);
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 500;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  user-select: none;
+}
+
+.agy-insert-btn:hover {
+  background-color: color-mix(in srgb, var(--agy-accent) 22%, var(--agy-surface-elevated));
+}
+
+.agy-new-block-editor {
+  margin: 10px 0;
+  padding: 10px 14px;
+  border-radius: 6px;
+  background-color: var(--agy-bg);
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--agy-accent) 55%, transparent);
 }
 
 /* Floating Selection AI Action Capsule (Unfolded Per-Platform Buttons) */
