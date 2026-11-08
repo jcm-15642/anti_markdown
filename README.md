@@ -1,80 +1,110 @@
-# Antigravity Markdown Viewer (`antigravity-markdown-viewer`)
+# Anti Markdown
 
-让任意项目中的 Markdown (`*.md`) 文档都能使用 **Antigravity IDE 内置 Artifact 编辑器**进行预览与交互的 VS Code / Antigravity 插件。
-
----
-
-## 一、原理解析：为什么 `brain/` 下的 Markdown 使用内置编辑器，而项目中的 `.md` 没有？
-
-在 Antigravity IDE 的内置插件 `google.google-antigravity`（位于 `extensions/agy/package.json`）中，官方注册了一个名为 **`antigravity.artifactEditor`**（显示名称为 **Antigravity Artifact Viewer**）的 Custom Editor，但它的 `selector` 被严格限制在了特定路径模式：
-
-```json
-"customEditors": [
-  {
-    "viewType": "antigravity.artifactEditor",
-    "displayName": "Antigravity Artifact Viewer",
-    "priority": "default",
-    "selector": [
-      { "filenamePattern": "antigravity:/**/*.md" },
-      { "filenamePattern": "**/.gemini/*/brain/**/*.md" }
-    ]
-  }
-]
-```
-
-因此：
-1. **为什么 `/home/mazhao/.gemini/antigravity/brain/.../django_orm_complete_guide.md` 会自动使用内置编辑器？**
-   因为它的路径匹配了 `**/.gemini/*/brain/**/*.md`，并且 Antigravity 在打开它时会将其 URI 转换为自定义协议 `jetski-artifact:///home/.../django_orm_complete_guide.md?cascadeId=<uuid>`，交由内置的 Jetski `ArtifactPage` 渲染。
-2. **为什么项目中的 `.md` 文件点击“打开侧边栏预览”效果完全不一样？**
-   因为普通项目路径不匹配 `**/.gemini/*/brain/**/*.md`，所以点击“打开侧边栏预览”调用的是 VS Code 原生自带的基础预览命令 `markdown.showPreviewToSide`（`vscode.markdown-language-features`），不支持 Antigravity 特有的 Artifact 顶栏、章节批注、`carousel` 轮播、`file://#L10-L20` 代码胶囊以及暗色主题下的 Mermaid 交互卡片。
+专为 **VS Code** 与 **Antigravity IDE** 打造的现代化 Markdown 实时渲染、原位编辑与 AI 协作扩展。
 
 ---
 
-## 二、本插件提供的双引擎解决方案
+## 插件特色与核心功能
 
-本插件同时提供 **原生内置桥接模式 (Native Bridge)** 与 **增强型独立编辑器模式 (Antigravity Artifact Viewer Pro)**：
+### 1. 实时渲染与原位双击编辑 (In-Place Live Editing)
+- **所见即所得的直接编辑**：在预览模式下即可双击任意文字块、段落直接进入原位编辑，光标精准定位在鼠标点击位置。
+- **三视图无缝切换**：
+  - **预览视图 (Preview)**：纯净的富文本渲染模式；
+  - **分栏编辑视图 (Split)**：左侧源码实时编辑、右侧即时高保真渲染；
+  - **源码视图 (Source)**：经典 Markdown 源码编辑。
+- **可折叠目录大纲 (TOC Outline)**：自动提取全文标题层级，支持侧边大纲一键跳转与平滑滚动定位。
 
-### 模式 A：直接调用 Antigravity IDE 原生内置 `antigravity.artifactEditor` (`jetski-artifact:`)
-插件深度适配了 `agy/vscode/extension.js` 中 `ArtifactEditorProvider` 的底层协议，自动将任意项目 `.md` 文件封装为 `jetski-artifact:` 协议 URI（自动清空 `authority` 以兼容 WSL Remote 环境，并自动挂载最近的 `cascadeId` 会话上下文），然后调用：
-```js
-vscode.commands.executeCommand('vscode.openWith', artifactUri, 'antigravity.artifactEditor', { ... });
-```
-从而实现 **100% 调用 Antigravity IDE 原生内置编辑器** 打开项目中的任意 `.md` 文件！
+### 2. 全能 Markdown 扩展语法支持
+- **内置 Mermaid 交互矢量图表**：
+  - 原生支持 `flowchart` / `graph`（支持节点自定义颜色、形状与子图分组）、`sequenceDiagram`（时序图）、`erDiagram`（实体关系模型表）、`xychart-beta` 等常见图表；
+  - 支持无损矢量缩放、平移与查看 DSL 源码。
+- **LaTeX / KaTeX 数学公式**：
+  - 支持 `$...$` 行内公式（如 `$E = mc^2$`）；
+  - 支持 `$$...$$` 独立块级公式的高质量排版与实时渲染。
+- **GitHub 风格 5 色 Alert 提示框**：
+  - 完美支持 `> [!NOTE]`、`> [!TIP]`、`> [!IMPORTANT]`、`> [!WARNING]`、`> [!CAUTION]`。
+- **Carousel 轮播多页卡片**：
+  - 支持 ````carousel` 语法与 `<!-- slide -->` 标记，实现多幻灯片平滑切换交互。
+- **源码高亮胶囊链接 (`file://` Pills)**：
+  - 智能识别 `[utils.py](file:///path/to/utils.py#L10-L20)` 格式；
+  - 点击胶囊直接在侧边栏编辑器打开对应文件，并高亮聚焦指定的代码行。
 
-### 模式 B：Antigravity Artifact Viewer Pro (`antiMarkdown.artifactEditor`)
-原生 `antigravity.artifactEditor` 虽然视觉效果好，但它只读取磁盘文件、不支持实时源码分栏编辑。因此本插件还内置了完整复刻 Antigravity 视觉与交互的增强型 Custom Editor：
-- **三视图无缝切换**：`预览 (Preview)` / `分栏实时编辑 (Split)` / `源码 (Source)` + 可折叠 **目录大纲 (TOC Outline)**。
-- **Mermaid 交互式图表**：内置支持 `flowchart`/`graph`（含 `subgraph`、自定义 `style` 颜色、多种节点形状）、`erDiagram`（实体属性表与关系连线）、`sequenceDiagram`、`xychart-beta`，支持缩放与查看 DSL 源码。
-- **GitHub 风格 5 色高亮框**：完整支持 `[!NOTE]`、`[!TIP]`、`[!IMPORTANT]`、`[!WARNING]`、`[!CAUTION]`。
-- **Carousel 轮播卡片**：支持 ````carousel` 与 `<!-- slide -->` 多页切换。
-- **源码胶囊链接 (`file://` Pills)**：点击 `[utils.py](file:///path/to/utils.py#L10-L20)` 直接在侧边打开对应源码并高亮选中 `L10-L20` 行。
-- **LaTeX / KaTeX 数学公式**：支持 `$...$` 行内公式与 `$$...$$` 块级公式渲染。
-- **章节批注 (Review Comments)**：悬停任意章节标题可点击 `+ 批注 (Review)` 生成结构化 Artifact 批注。
-- **顶栏一键切原生**：预览界面右上角提供 **`✦ 原生内置视图 (jetski)`** 按钮，随时一键切换到官方原生视图。
+### 3. 全编辑器通用悬浮 AI 胶囊 (Universal Selection AI Capsule)
+在任意打开的代码编辑器（无论是 Markdown 源码还是 `.js`、`.ts`、`.py`、`.java`、`.go` 等常规代码文件）中选中文本时，均可自动唤起悬浮交互胶囊：
+- **行范围指示徽章**：清晰呈现当前框选的行号区间（如 `L10-15`）。
+- **一键发送到多 AI 聊天平台**：
+  - `💬 VS Code`：直接将选中文本与文件上下文附加到 VS Code Chat / Copilot；
+  - `✦ Antigravity`：直接调用 Antigravity IDE 原生聊天接口 (`antigravity.addContext`)；
+  - `✴ Claude Code`：原生一键发送到 Claude Code (`claude-vscode.insertAtMention`)；
+  - `◎ Codex`：原生一键发送到 OpenAI Codex (`chatgpt.addToThread`)。
+- **防遮挡与防断触优化**：
+  - 胶囊智能呈现在选区下方空白区域，绝不遮蔽任何被选中的代码内容；
+  - 纯原生选区交互，无论是快速划选还是慢速跨行拖拽，均零断触、零丢弃。
+
+### 4. 双引擎灵活切换
+- **Anti Markdown Pro 引擎**：内置高性能独立富文本渲染器，支持即时原位编辑与多格式扩展。
+- **原生内置视图一键切换**：支持随时一键无缝唤起 Antigravity IDE 官方原生 `antigravity.artifactEditor` (`jetski-artifact`) 查看效果。
 
 ---
 
-## 三、快捷键与入口说明
+## 快捷键与操作入口
 
-| 功能入口 | 快捷键 / 操作方式 | 命令 ID |
+| 功能说明 | 快捷键 / 操作方式 | 对应命令 ID |
 | :--- | :--- | :--- |
-| **侧边栏打开 Antigravity 原生内置预览** | `Ctrl+Alt+V`（或点击编辑器右上角图标） | `antiMarkdown.openNativeArtifactToSide` |
-| **在当前标签页用 Antigravity 原生内置编辑器打开** | 资源管理器右键 `.md` 文件 -> 使用 Antigravity 原生内置编辑器打开 | `antiMarkdown.openNativeArtifact` |
-| **侧边栏打开 Antigravity 实时同步预览 (Pro)** | 点击编辑器右上角分栏图标 | `antiMarkdown.openPreviewToSide` |
-| **切换 Markdown 源码 / Antigravity 预览** | `Ctrl+Alt+M`（或点击编辑器右上角切换图标） | `antiMarkdown.switchEditor` |
-| **配置默认打开方式 (`Pro` / `Native` / `源码`)** | 命令面板 `Ctrl+Shift+P` -> `Antigravity Markdown: 配置默认 Markdown 编辑器模式` | `antiMarkdown.toggleDefaultAssociation` |
-| **选择打开方式 (`Reopen Editor With...`)** | 右键 `.md` 文件 -> `打开方式... (Open With...)` -> 选择 **Antigravity Artifact Viewer (Pro)** 或 **Antigravity Artifact Viewer** | - |
+| **切换 Markdown 源码 / Anti Markdown 预览** | `Ctrl+Alt+M`（Mac: `Cmd+Alt+M`）或点击编辑器右上角切换图标 | `antiMarkdown.switchEditor` |
+| **侧边栏打开 Antigravity 原生内置预览** | `Ctrl+Alt+V`（Mac: `Cmd+Alt+V`）或点击编辑器右上角图标 | `antiMarkdown.openNativeArtifactToSide` |
+| **侧边栏打开实时同步预览 (Pro)** | 点击编辑器右上角分栏预览图标 | `antiMarkdown.openPreviewToSide` |
+| **在当前标签页用原生内置编辑器打开** | 资源管理器右键 `.md` 文件 -> `使用 Antigravity 原生内置编辑器打开` | `antiMarkdown.openNativeArtifact` |
+| **使用 Anti Markdown 编辑器打开** | 资源管理器右键 `.md` 文件 -> `使用 Antigravity 增强型编辑器打开` | `antiMarkdown.openStandaloneViewer` |
+| **选择打开方式 (`Open With...`)** | 资源管理器右键 `.md` 文件 -> `打开方式... (Open With...)` -> 选择 **Anti Markdown Editor (Pro)** | - |
+| **配置默认打开方式** | 命令面板 (`Ctrl+Shift+P`) -> 输入 `Anti Markdown: 配置默认 Markdown 编辑器模式` | `antiMarkdown.toggleDefaultAssociation` |
 
 ---
 
-## 四、安装方法
+## 配置项说明
 
-在当前项目目录下已打包好可直接安装的 VSIX 文件 `antigravity-markdown-viewer-1.0.0.vsix`：
+可在 VS Code 设置 (`Ctrl+,`) 中搜索 `antiMarkdown` 进行个性化配置：
 
-1. **通过图形界面安装**：
-   打开扩展面板 (`Ctrl+Shift+X`) -> 点击右上角 `...` 菜单 -> 选择 **`从 VSIX 安装... (Install from VSIX...)`** -> 选择 `/home/mazhao/workspace/AI_Learning/anti_markdown/antigravity-markdown-viewer-1.0.0.vsix`。
-2. **或者通过命令行一键安装**：
-   ```bash
-   agy --install-extension /home/mazhao/workspace/AI_Learning/anti_markdown/antigravity-markdown-viewer-1.0.0.vsix
-   ```
+| 配置项 | 类型 | 默认值 | 说明 |
+| :--- | :--- | :--- | :--- |
+| `antiMarkdown.defaultViewMode` | `string` | `"preview"` | 打开 Markdown 文件时的默认视图模式（可选 `preview`, `split`, `source`） |
+| `antiMarkdown.showOutline` | `boolean` | `true` | 是否默认在侧边栏显示可折叠目录大纲 (TOC) |
+| `antiMarkdown.enabledAiPlatforms` | `array` | `["vscode", "antigravity", "claude", "codex"]` | 悬浮胶囊及顶栏中启用的 AI 发送平台列表 |
+| `antiMarkdown.selectionHoverCapsule` | `boolean` | `true` | 是否在所有代码编辑器中启用文本选中的浮动 AI 发送胶囊 |
+| `antiMarkdown.engineMode` | `string` | `"standalone"` | 默认核心引擎模式（`"standalone"`: Anti Markdown Pro 增强版; `"native"`: Antigravity IDE 原生引擎） |
 
+---
+
+## 安装与使用 (Installation)
+
+### 方式一：直接下载 VSIX 安装包（推荐）
+1. 前往 GitHub Releases 页面下载最新安装包：
+   - 👉 **[下载最新版本 anti-markdown-1.7.4.vsix](https://github.com/jcm-15642/anti_markdown/releases/download/v1.7.4/anti-markdown-1.7.4.vsix)**
+   - 或在仓库中直接下载：[`anti-markdown-1.7.4.vsix`](https://github.com/jcm-15642/anti_markdown/raw/main/anti-markdown-1.7.4.vsix)
+2. **在编辑器中安装**：
+   - 打开 VS Code / Antigravity IDE 扩展面板 (`Ctrl+Shift+X` / `Cmd+Shift+X`)；
+   - 点击右上角 `...` 菜单，选择 **从 VSIX 安装... (Install from VSIX...)**；
+   - 选择下载好的 `anti-markdown-1.7.4.vsix` 即可完成安装。
+
+### 方式二：命令行一键安装
+下载 `.vsix` 文件后，在终端执行以下命令之一：
+```bash
+# VS Code
+code --install-extension anti-markdown-1.7.4.vsix
+
+# Antigravity IDE
+agy --install-extension anti-markdown-1.7.4.vsix
+```
+
+### 方式三：从源码构建并安装
+```bash
+# 克隆仓库
+git clone https://github.com/jcm-15642/anti_markdown.git
+cd anti_markdown
+
+# 执行检查与打包
+npm test
+
+# 安装生成的 vsix 包
+code --install-extension anti-markdown-1.7.4.vsix
+```

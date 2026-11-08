@@ -294,7 +294,8 @@ function runVerificationSuite() {
 
   console.log('=== 2. Verifying package.json Manifest ===');
   const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-  assert.strictEqual(pkg.name, 'antigravity-markdown-viewer');
+  assert.ok(pkg.name === 'anti-markdown' || pkg.name === 'antigravity-markdown-viewer', 'Valid extension package name');
+  assert.strictEqual(pkg.displayName, 'Anti Markdown');
   assert.notStrictEqual(pkg.version, '1.0.0', 'Version must not stay at 1.0.0');
   assert.strictEqual(pkg.contributes.customEditors[0].viewType, 'antiMarkdown.artifactEditor');
   const patterns = pkg.contributes.customEditors[0].selector.map((s) => s.filenamePattern);

@@ -1,7 +1,7 @@
 {
-  "name": "antigravity-markdown-viewer",
-  "displayName": "Antigravity Markdown Viewer",
-  "description": "Preview and edit any project Markdown (.md) file with Antigravity IDE's built-in Artifact Viewer (native bridge + standalone Custom Editor with direct in-preview live editing, draggable Mermaid, KaTeX math, Alerts, Carousels, file:// pills, and Copilot/Claude Code/Antigravity selection sync).",
+  "name": "anti-markdown",
+  "displayName": "Anti Markdown",
+  "description": "Anti Markdown - Modern Markdown live editor and rich renderer with Mermaid diagrams, KaTeX math, GitHub alerts, Carousels, and universal selection AI capsule for VS Code / Antigravity IDE.",
   "version": "1.7.4",
   "publisher": "mazhao",
   "license": "MIT",
@@ -39,7 +39,7 @@
     "customEditors": [
       {
         "viewType": "antiMarkdown.artifactEditor",
-        "displayName": "Antigravity Artifact Viewer (Pro)",
+        "displayName": "Anti Markdown Editor (Pro)",
         "priority": "default",
         "selector": [
           {
@@ -61,37 +61,37 @@
       {
         "command": "antiMarkdown.openNativeArtifact",
         "title": "使用 Antigravity 原生内置编辑器打开 (Open in Native Artifact Viewer)",
-        "category": "Antigravity Markdown",
+        "category": "Anti Markdown",
         "icon": "$(sparkle)"
       },
       {
         "command": "antiMarkdown.openNativeArtifactToSide",
         "title": "侧边栏打开 Antigravity 原生内置预览 (Open Native Artifact Viewer to the Side)",
-        "category": "Antigravity Markdown",
+        "category": "Anti Markdown",
         "icon": "$(open-preview)"
       },
       {
         "command": "antiMarkdown.openStandaloneViewer",
         "title": "使用 Antigravity 增强型编辑器打开 (Open in Antigravity Artifact Viewer Pro)",
-        "category": "Antigravity Markdown",
+        "category": "Anti Markdown",
         "icon": "$(book)"
       },
       {
         "command": "antiMarkdown.openPreviewToSide",
         "title": "侧边栏打开 Antigravity 实时同步预览 (Open Live Artifact Preview to the Side)",
-        "category": "Antigravity Markdown",
+        "category": "Anti Markdown",
         "icon": "$(split-horizontal)"
       },
       {
         "command": "antiMarkdown.switchEditor",
         "title": "切换 Markdown 源码 / Antigravity 预览 (Switch Source / Artifact Viewer)",
-        "category": "Antigravity Markdown",
+        "category": "Anti Markdown",
         "icon": "$(arrow-swap)"
       },
       {
         "command": "antiMarkdown.toggleDefaultAssociation",
         "title": "配置默认 Markdown 编辑器模式 (Configure Default Markdown Editor)",
-        "category": "Antigravity Markdown",
+        "category": "Anti Markdown",
         "icon": "$(settings-gear)"
       },
       {
@@ -211,7 +211,7 @@
     },
     "configuration": {
       "type": "object",
-      "title": "Antigravity Markdown Viewer",
+      "title": "Anti Markdown",
       "properties": {
         "antiMarkdown.engineMode": {
           "type": "string",
