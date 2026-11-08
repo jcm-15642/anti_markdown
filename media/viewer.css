@@ -1213,9 +1213,10 @@ body.vscode-light .agy-mermaid-stage svg {
   pointer-events: auto;
 }
 
+.agy-root.has-selection-capsule .agy-block-toolbar,
 .agy-editable-block.is-editing-inplace > .agy-block-toolbar {
-  opacity: 0;
-  pointer-events: none;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 
 .agy-block-btn {

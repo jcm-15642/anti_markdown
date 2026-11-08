@@ -2550,8 +2550,153 @@
       renderSingleBlockContent(contentBox, block, callbacks);
       wrapper.appendChild(contentBox);
 
-      const startInPlaceEditing = () => {
-        if (wrapper.classList.contains('is-editing')) {
+      const isComplexVisualBlock =
+        block.type === 'mermaid' ||
+        block.type === 'mathBlock' ||
+        block.type === 'table' ||
+        block.type === 'code' ||
+        block.type === 'carousel';
+
+      // Mode 1: True In-Place Editing at Original Position (for heading, paragraph, alert, blockquote, list)
+      const startTrueInPlaceEditing = () => {
+        if (wrapper.classList.contains('is-editing-inplace') || wrapper.classList.contains('is-editing')) {
+          return;
+        }
+        wrapper.classList.add('is-editing-inplace');
+
+        const currentSlice =
+          callbacks && typeof callbacks.getBlockMarkdown === 'function'
+            ? callbacks.getBlockMarkdown(block.startLine, block.endLine)
+            : block.rawMarkdown || '';
+
+        let hostEl = contentBox;
+        let initialValue = currentSlice;
+        let serializeValue = (val) => val;
+
+        if (block.type === 'heading') {
+          const hEl = contentBox.querySelector('.agy-heading');
+          if (hEl) {
+            hostEl = hEl;
+          }
+          initialValue = block.text || currentSlice.replace(/^\s*#{1,6}\s+/, '');
+          const hashes = '#'.repeat(Math.min(6, Math.max(1, block.level || 1)));
+          serializeValue = (val) => {
+            const trimmed = val.replace(/\r?\n/g, ' ').trim();
+            if (/^\s*#{1,6}\s+/.test(trimmed)) {
+              return trimmed;
+            }
+            return `${hashes} ${trimmed}`;
+          };
+        } else if (block.type === 'alert') {
+          const alertBody = contentBox.querySelector('.agy-alert-body');
+          if (alertBody) {
+            hostEl = alertBody;
+          }
+          initialValue = block.body || '';
+          serializeValue = (val) => {
+            const quotedBody = String(val || '')
+              .split('\n')
+              .map((lineStr) => `> ${lineStr}`)
+              .join('\n');
+            return `> [!${block.alertType}]\n${quotedBody}`;
+          };
+        } else if (block.type === 'blockquote') {
+          const bqEl = contentBox.querySelector('.agy-blockquote');
+          if (bqEl) {
+            hostEl = bqEl;
+          }
+          initialValue = block.body || '';
+          serializeValue = (val) =>
+            String(val || '')
+              .split('\n')
+              .map((lineStr) => `> ${lineStr}`)
+              .join('\n');
+        } else if (block.type === 'paragraph') {
+          const pEl = contentBox.querySelector('.agy-p');
+          if (pEl) {
+            hostEl = pEl;
+          }
+          initialValue = currentSlice;
+        }
+
+        const inplaceInput = el('textarea', 'agy-inplace-editor', null, {
+          rows: Math.max(1, initialValue.split('\n').length)
+        });
+        inplaceInput.value = initialValue;
+
+        const autoFitHeight = () => {
+          inplaceInput.style.height = 'auto';
+          if (inplaceInput.scrollHeight > 0) {
+            inplaceInput.style.height = `${inplaceInput.scrollHeight}px`;
+          }
+        };
+
+        hostEl.replaceChildren(inplaceInput);
+        autoFitHeight();
+        inplaceInput.focus();
+
+        let activeStart = block.startLine;
+        let activeEnd = block.endLine;
+        let finished = false;
+
+        inplaceInput.addEventListener('input', () => {
+          autoFitHeight();
+          const updatedMd = serializeValue(inplaceInput.value);
+          if (callbacks && typeof callbacks.onBlockLiveEdit === 'function') {
+            const newEnd = callbacks.onBlockLiveEdit(activeStart, activeEnd, updatedMd);
+            if (typeof newEnd === 'number') {
+              activeEnd = newEnd;
+              block.endLine = newEnd;
+              wrapper.setAttribute('data-end-line', String(activeEnd + 1));
+            }
+          }
+        });
+
+        const finishInPlace = () => {
+          if (finished) return;
+          finished = true;
+          if (typeof document !== 'undefined' && document.removeEventListener) {
+            document.removeEventListener('mousedown', onOutsideMouseDown, true);
+          }
+          wrapper.classList.remove('is-editing-inplace');
+          const updatedMd = serializeValue(inplaceInput.value);
+          block.rawMarkdown = updatedMd;
+          contentBox.replaceChildren();
+          const liveAst = parseMarkdownToAst(updatedMd);
+          liveAst.blocks.forEach((b) => renderSingleBlockContent(contentBox, b, callbacks));
+          if (callbacks && typeof callbacks.onBlockEditCommit === 'function') {
+            callbacks.onBlockEditCommit(true);
+          }
+        };
+
+        const onOutsideMouseDown = (ev) => {
+          if (!wrapper.contains(ev.target)) {
+            finishInPlace();
+          }
+        };
+
+        if (typeof document !== 'undefined' && document.addEventListener) {
+          document.addEventListener('mousedown', onOutsideMouseDown, true);
+        }
+
+        inplaceInput.addEventListener('blur', () => {
+          setTimeout(() => {
+            finishInPlace();
+          }, 10);
+        });
+
+        inplaceInput.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Escape' || ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter')) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            finishInPlace();
+          }
+        });
+      };
+
+      // Mode 2: Live Source + Live Preview Box Editing (for Mermaid, Math Block, Table, Code, Carousel)
+      const startBoxLiveEditing = () => {
+        if (wrapper.classList.contains('is-editing') || wrapper.classList.contains('is-editing-inplace')) {
           return;
         }
         wrapper.classList.add('is-editing');
@@ -2645,6 +2790,14 @@
         });
       };
 
+      const startInPlaceEditing = () => {
+        if (isComplexVisualBlock) {
+          startBoxLiveEditing();
+        } else {
+          startTrueInPlaceEditing();
+        }
+      };
+
       editBtn.addEventListener('click', (ev) => {
         ev.stopPropagation();
         startInPlaceEditing();
@@ -2657,27 +2810,24 @@
         }
       });
 
-      // Click directly on text blocks (when not dragging a text selection) or double-click any block to edit in place!
+      // Click directly on regular content blocks (when not dragging a text selection) to edit directly in-place!
       wrapper.addEventListener('click', (ev) => {
-        if (wrapper.classList.contains('is-editing')) return;
+        if (wrapper.classList.contains('is-editing') || wrapper.classList.contains('is-editing-inplace')) return;
         const sel = typeof window !== 'undefined' && window.getSelection ? String(window.getSelection()).trim() : '';
         if (sel.length > 0) return;
         const targetTag = (ev.target && ev.target.tagName ? ev.target.tagName : '').toLowerCase();
         if (targetTag === 'a' || targetTag === 'button' || targetTag === 'input' || targetTag === 'textarea') {
           return;
         }
-        if (
-          block.type === 'paragraph' ||
-          block.type === 'heading' ||
-          block.type === 'blockquote' ||
-          block.type === 'alert'
-        ) {
-          startInPlaceEditing();
+        if (!isComplexVisualBlock && block.type !== 'hr') {
+          startTrueInPlaceEditing();
         }
       });
 
       wrapper.addEventListener('dblclick', (ev) => {
-        if (wrapper.classList.contains('is-editing')) return;
+        if (wrapper.classList.contains('is-editing') || wrapper.classList.contains('is-editing-inplace')) return;
+        const sel = typeof window !== 'undefined' && window.getSelection ? String(window.getSelection()).trim() : '';
+        if (sel.length > 0 && !isComplexVisualBlock) return;
         ev.stopPropagation();
         startInPlaceEditing();
       });
@@ -2845,6 +2995,7 @@
           ev.stopPropagation();
           sendRangeToPlatform(p.id, lastSelectionRange);
           selectionBar.classList.add('hidden');
+          root.classList.remove('has-selection-capsule');
         });
         selPlatformWrap.appendChild(b);
       });
@@ -2939,6 +3090,21 @@
 
     let lastSelectionRange = { startLineNumber: 1, endLineNumber: 1, selectedText: '' };
 
+    const hideSelectionCapsule = () => {
+      selectionBar.classList.add('hidden');
+      root.classList.remove('has-selection-capsule');
+    };
+
+    document.addEventListener('mousedown', (ev) => {
+      if (!selectionBar.contains(ev.target)) {
+        hideSelectionCapsule();
+      }
+    });
+
+    previewPane.addEventListener('scroll', () => {
+      hideSelectionCapsule();
+    });
+
     // Detect text selection in Preview: only show the floating AI capsule (never opens any text editor)
     document.addEventListener('mouseup', (ev) => {
       if (selectionBar.contains(ev.target)) {
@@ -2948,7 +3114,7 @@
         const sel = window.getSelection ? window.getSelection() : null;
         const selText = sel ? String(sel).trim() : '';
         if (!selText || (document.activeElement && document.activeElement.tagName === 'TEXTAREA')) {
-          selectionBar.classList.add('hidden');
+          hideSelectionCapsule();
           return;
         }
 
@@ -2958,11 +3124,42 @@
         refreshAiPlatformUi();
 
         selectionBar.classList.remove('hidden');
-        const barWidth = selectionBar.offsetWidth || 420;
-        const x = Math.min(window.innerWidth - barWidth - 12, Math.max(12, ev.clientX - 80));
-        const y = Math.max(52, ev.clientY - 48);
-        selectionBar.style.left = `${x}px`;
-        selectionBar.style.top = `${y}px`;
+        root.classList.add('has-selection-capsule');
+        const barWidth = selectionBar.offsetWidth || 380;
+        const barHeight = selectionBar.offsetHeight || 36;
+
+        let rect = null;
+        if (sel && sel.rangeCount > 0) {
+          try {
+            const r = sel.getRangeAt(0).getBoundingClientRect();
+            if (r && (r.width > 0 || r.height > 0)) {
+              rect = r;
+            }
+          } catch (_err) {
+            rect = null;
+          }
+        }
+
+        let x = ev.clientX - 40;
+        let y = ev.clientY - barHeight - 14;
+        if (rect) {
+          // If there is ample empty space to the right of the selection on the same row, place it to the right
+          if (window.innerWidth - rect.right >= barWidth + 24) {
+            x = rect.right + 12;
+            y = Math.max(52, rect.top + (rect.height - barHeight) / 2);
+          } else {
+            x = rect.right - barWidth / 2;
+            if (rect.top - barHeight - 12 >= 52) {
+              y = rect.top - barHeight - 12;
+            } else {
+              y = rect.bottom + 12;
+            }
+          }
+        }
+        x = Math.min(window.innerWidth - barWidth - 12, Math.max(12, x));
+        y = Math.min(window.innerHeight - barHeight - 12, Math.max(52, y));
+        selectionBar.style.left = `${Math.round(x)}px`;
+        selectionBar.style.top = `${Math.round(y)}px`;
       }, 20);
     });
 

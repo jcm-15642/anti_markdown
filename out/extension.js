@@ -645,13 +645,97 @@ async function sendSelectionToSinglePlatform(document, webviewPanel, msg) {
 }
 
 /**
+ * Build a crisp inline SVG data URI for the `L<start>-<end>` range badge
+ * matching `.agy-selection-range-badge` in the Markdown viewer.
+ * @param {number} start1
+ * @param {number} end1
+ * @returns {string}
+ */
+function buildRangeBadgeSvgDataUri(start1, end1) {
+  const label = `L${start1}-${end1}`;
+  const width = Math.max(44, Math.round(label.length * 7.2 + 14));
+  const svg = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="24" viewBox="0 0 ${width} 24">`,
+    `  <rect x="0.5" y="0.5" width="${width - 1}" height="23" rx="4.5" fill="#131316" stroke="#363844"/>`,
+    `  <text x="${(width / 2).toFixed(1)}" y="15.8" text-anchor="middle" fill="#a1a1aa" font-family="ui-monospace,SFMono-Regular,Consolas,'Courier New',monospace" font-size="11.5" font-weight="600">${label}</text>`,
+    '</svg>'
+  ].join('');
+  return `data:image/svg+xml;base64,${Buffer.from(svg, 'utf8').toString('base64')}`;
+}
+
+/**
+ * Build a crisp inline SVG data URI for each AI platform pill button
+ * (`💬 VS Code`, `✦ Antigravity`, `✴ Claude Code`, `◎ Codex`)
+ * matching `.agy-selection-pill-btn` in the Markdown viewer.
+ * @param {string} platformId
+ * @returns {string}
+ */
+function buildPlatformPillSvgDataUri(platformId) {
+  let width = 88;
+  let iconSvg = '';
+  let label = '';
+  let textX = 25;
+
+  if (platformId === 'vscode') {
+    width = 80;
+    label = 'VS Code';
+    textX = 25;
+    iconSvg =
+      '<path d="M10.5 8.2h8a1.8 1.8 0 0 1 1.8 1.8v4.2a1.8 1.8 0 0 1-1.8 1.8h-4.4l-2.6 2.1v-2.1h-1a1.8 1.8 0 0 1-1.8-1.8V10a1.8 1.8 0 0 1 1.8-1.8z" fill="none" stroke="#60a5fa" stroke-width="1.35" stroke-linejoin="round"/>';
+  } else if (platformId === 'antigravity') {
+    width = 96;
+    label = 'Antigravity';
+    textX = 24;
+    iconSvg = '<path d="M14.5 6.4 L16.1 10.4 L20.1 12 L16.1 13.6 L14.5 17.6 L12.9 13.6 L8.9 12 L12.9 10.4 Z" fill="#60a5fa"/>';
+  } else if (platformId === 'claude') {
+    width = 104;
+    label = 'Claude Code';
+    textX = 24;
+    iconSvg = [
+      '<g stroke="#60a5fa" stroke-width="1.4" stroke-linecap="round">',
+      '  <line x1="14.5" y1="6.8" x2="14.5" y2="17.2"/>',
+      '  <line x1="9.3" y1="12" x2="19.7" y2="12"/>',
+      '  <line x1="10.8" y1="8.3" x2="18.2" y2="15.7"/>',
+      '  <line x1="18.2" y1="8.3" x2="10.8" y2="15.7"/>',
+      '</g>'
+    ].join('');
+  } else {
+    width = 72;
+    label = 'Codex';
+    textX = 25;
+    iconSvg = [
+      '<circle cx="14.5" cy="12" r="5" fill="none" stroke="#60a5fa" stroke-width="1.3"/>',
+      '<circle cx="14.5" cy="12" r="2.3" fill="none" stroke="#60a5fa" stroke-width="1.2"/>'
+    ].join('');
+  }
+
+  const svg = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="24" viewBox="0 0 ${width} 24">`,
+    `  <rect x="0.5" y="0.5" width="${width - 1}" height="23" rx="5" fill="#3b82f6" fill-opacity="0.16" stroke="#60a5fa" stroke-opacity="0.42"/>`,
+    `  ${iconSvg}`,
+    `  <text x="${textX}" y="15.8" fill="#60a5fa" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif" font-size="11.5" font-weight="600">${label}</text>`,
+    '</svg>'
+  ].join('');
+  return `data:image/svg+xml;base64,${Buffer.from(svg, 'utf8').toString('base64')}`;
+}
+
+const PLATFORM_PILL_DATA_URIS = {
+  vscode: buildPlatformPillSvgDataUri('vscode'),
+  antigravity: buildPlatformPillSvgDataUri('antigravity'),
+  claude: buildPlatformPillSvgDataUri('claude'),
+  codex: buildPlatformPillSvgDataUri('codex')
+};
+
+/**
  * Universal Floating AI Capsule for ALL files opened in standard text editors:
- * Pops up a floating Hover capsule (`📌 Lx-y  💬 VS Code  ✦ Antigravity  ✴ Claude Code  ◎ Codex`)
- * directly over the selected text whenever text is selected in any file.
+ * Pops up a floating Hover capsule with the exact pill styling of the Markdown viewer
+ * (`[ Lx-y ]  [ 💬 VS Code ]  [ ✦ Antigravity ]  [ ✴ Claude Code ]  [ ◎ Codex ]`)
+ * positioned outside the selected text so it never occludes selected text.
  * @param {vscode.ExtensionContext} context
  */
 function registerUniversalSelectionCapsule(context) {
   let hoverTimer = null;
+  let isAdjustingSelection = false;
 
   const updateContextKeys = () => {
     const enabled = getEnabledAiPlatforms();
@@ -672,7 +756,10 @@ function registerUniversalSelectionCapsule(context) {
           const sel = editor.selection;
           const startLine0 = sel.start.line;
           const endLine0 = sel.end.character === 0 && sel.end.line > startLine0 ? sel.end.line - 1 : sel.end.line;
-          if (position.line < startLine0 || position.line > endLine0 + 1) {
+
+          // Only show the capsule at the active selection endpoint so hovering over the middle of
+          // multi-line selected text never covers the selected lines
+          if (position.line !== sel.active.line && position.line !== startLine0) {
             return null;
           }
 
@@ -686,41 +773,70 @@ function registerUniversalSelectionCapsule(context) {
 
           const start1 = startLine0 + 1;
           const end1 = endLine0 + 1;
+          const rangeBadgeUri = buildRangeBadgeSvgDataUri(start1, end1);
           const pills = enabled.map((id) => {
             const meta = AI_PLATFORM_META[id];
-            return `[${meta.icon} ${meta.label}](command:antiMarkdown.sendSelectionTo.${id} "仅发送到 ${meta.label} 聊天框")`;
+            const pillUri = PLATFORM_PILL_DATA_URIS[id];
+            return `[![${meta.label}](${pillUri})](command:antiMarkdown.sendSelectionTo.${id} "仅发送到 ${meta.label} 聊天框")`;
           });
 
           const md = new vscode.MarkdownString(
-            `📌 **L${start1}-${end1}** &nbsp;&nbsp; ${pills.join(' &nbsp;·&nbsp; ')}`,
+            `![L${start1}-${end1}](${rangeBadgeUri}) &nbsp;${pills.join(' &nbsp;')}`,
             true
           );
           md.isTrusted = true;
-          return new vscode.Hover(md, new vscode.Range(sel.start, sel.end));
+          return new vscode.Hover(md, new vscode.Range(position, position));
         }
       }
     ),
     vscode.window.onDidChangeTextEditorSelection((ev) => {
-      if (ev.textEditor !== vscode.window.activeTextEditor) {
+      if (isAdjustingSelection || ev.textEditor !== vscode.window.activeTextEditor) {
         return;
       }
       if (hoverTimer) {
         clearTimeout(hoverTimer);
         hoverTimer = null;
       }
+      // Hide any existing hover while the user is actively changing the selection
+      vscode.commands.executeCommand('editor.action.hideHover').then(undefined, () => {});
       if (ev.textEditor.selection.isEmpty) {
-        vscode.commands.executeCommand('editor.action.hideHover').then(undefined, () => {});
         return;
       }
       hoverTimer = setTimeout(() => {
         hoverTimer = null;
         const active = vscode.window.activeTextEditor;
-        if (active && !active.selection.isEmpty) {
-          vscode.commands
-            .executeCommand('editor.action.showHover', { focus: 'noAutoFocus' })
-            .then(undefined, () => {});
+        if (!active || active.selection.isEmpty) {
+          return;
         }
-      }, 160);
+        const sel = active.selection;
+        const firstVisibleLine =
+          active.visibleRanges && active.visibleRanges.length > 0 ? active.visibleRanges[0].start.line : 0;
+
+        // Ensure `editor.selection.active` is on the outer boundary of a multi-line selection
+        // so VS Code places the Hover outside (above `sel.start` or below `sel.end`) and never over the selected text
+        if (sel.start.line < sel.end.line) {
+          const canPlaceAbove = sel.start.line > firstVisibleLine;
+          if (canPlaceAbove && sel.active.line > sel.start.line) {
+            isAdjustingSelection = true;
+            try {
+              active.selection = new vscode.Selection(sel.end, sel.start);
+            } finally {
+              isAdjustingSelection = false;
+            }
+          } else if (!canPlaceAbove && sel.active.line < sel.end.line) {
+            isAdjustingSelection = true;
+            try {
+              active.selection = new vscode.Selection(sel.start, sel.end);
+            } finally {
+              isAdjustingSelection = false;
+            }
+          }
+        }
+
+        vscode.commands
+          .executeCommand('editor.action.showHover', { focus: 'noAutoFocus' })
+          .then(undefined, () => {});
+      }, 260);
     }),
     vscode.workspace.onDidChangeConfiguration((ev) => {
       if (ev.affectsConfiguration('antiMarkdown')) {
