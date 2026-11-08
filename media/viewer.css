@@ -51,7 +51,7 @@ body {
 .agy-topbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
   height: 44px;
   padding: 0 16px;
@@ -1180,18 +1180,34 @@ body.vscode-light .agy-mermaid-stage svg {
 
 .agy-block-toolbar {
   position: absolute;
-  top: 4px;
-  right: 6px;
+  bottom: 100%;
+  right: 0;
   display: flex;
   align-items: center;
   gap: 4px;
+  padding-bottom: 4px;
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.14s ease;
-  z-index: 10;
+  z-index: 20;
+}
+
+/* Invisible hover bridge so the cursor can travel from the block up to the outer toolbar */
+.agy-block-toolbar::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: -6px;
+  height: 10px;
+}
+
+.agy-editable-block {
+  margin-top: 4px;
 }
 
 .agy-editable-block:hover > .agy-block-toolbar,
+.agy-block-toolbar:hover,
 .agy-editable-block.is-editing > .agy-block-toolbar {
   opacity: 1;
   pointer-events: auto;

@@ -262,15 +262,8 @@ function packageVsix(pkg) {
     });
   }
 
-  // Clean up stale .vsix files from previous versions
-  const existingFiles = fs.readdirSync(ROOT);
+  // Preserve all previous .vsix files
   const targetFileName = `${pkg.name}-${pkg.version}.vsix`;
-  for (const f of existingFiles) {
-    if (f.endsWith('.vsix') && f !== targetFileName) {
-      fs.unlinkSync(path.join(ROOT, f));
-    }
-  }
-
   const vsixPath = path.join(ROOT, targetFileName);
   const zipBuf = buildZipArchive(entries);
   fs.writeFileSync(vsixPath, zipBuf);

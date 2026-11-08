@@ -2376,20 +2376,8 @@
         const rendered = renderMermaidSvg(block.code);
         const toolbar = el('div', 'agy-mermaid-toolbar');
         toolbar.appendChild(
-          el('span', 'agy-mermaid-title', `◇ Mermaid · ${rendered.diagramType} (按住鼠标拖拽平移 / 滚轮缩放)`)
+          el('span', 'agy-mermaid-title', `◇ Mermaid · ${rendered.diagramType}`)
         );
-
-        const controls = el('div', 'agy-mermaid-controls');
-        const zoomOutBtn = el('button', 'agy-mermaid-btn', '－');
-        const zoomResetBtn = el('button', 'agy-mermaid-btn', '100%');
-        const zoomInBtn = el('button', 'agy-mermaid-btn', '＋');
-        const toggleSrcBtn = el('button', 'agy-mermaid-btn', '源码 (DSL)');
-
-        controls.appendChild(zoomOutBtn);
-        controls.appendChild(zoomResetBtn);
-        controls.appendChild(zoomInBtn);
-        controls.appendChild(toggleSrcBtn);
-        toolbar.appendChild(controls);
         card.appendChild(toolbar);
 
         const viewport = el('div', 'agy-mermaid-viewport');
@@ -2397,9 +2385,6 @@
         stage.appendChild(rendered.svg);
         viewport.appendChild(stage);
         card.appendChild(viewport);
-
-        const srcPre = el('pre', 'agy-mermaid-source', block.code);
-        card.appendChild(srcPre);
 
         let scale = 1;
         let panX = 0;
@@ -2412,33 +2397,12 @@
 
         const applyTransform = () => {
           stage.style.transform = `translate(${Math.round(panX)}px, ${Math.round(panY)}px) scale(${scale})`;
-          zoomResetBtn.textContent = `${Math.round(scale * 100)}%`;
         };
 
         const updateScale = (nextScale) => {
           scale = Math.min(3.0, Math.max(0.35, nextScale));
           applyTransform();
         };
-
-        zoomInBtn.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          updateScale(scale + 0.15);
-        });
-        zoomOutBtn.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          updateScale(scale - 0.15);
-        });
-        zoomResetBtn.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          scale = 1;
-          panX = 0;
-          panY = 0;
-          applyTransform();
-        });
-        toggleSrcBtn.addEventListener('click', (ev) => {
-          ev.stopPropagation();
-          srcPre.classList.toggle('visible');
-        });
 
         // Interactive Mouse Drag Panning
         viewport.addEventListener('mousedown', (ev) => {
@@ -2569,158 +2533,25 @@
         'data-block-index': i
       });
 
-      // Hover Action Toolbar (Direct Edit + Send to Chat + Review)
+      // Hover Action Toolbar (Direct Edit + Send to Chat, positioned outside the block box)
       const toolbar = el('div', 'agy-block-toolbar');
       const editBtn = el('button', 'agy-block-btn', '✎ 直接编辑', {
         title: '在预览界面直接编辑此块并实时渲染 (或直接点击文本段落)'
       });
       const chatBtn = el('button', 'agy-block-btn', `📌 引用 L${startLine1}-${endLine1}`, {
-        title: '将此段落文件与行号添加到 VS Code Copilot / Claude Code / Antigravity 聊天框'
+        title: '将此段落文件与行号添加到当前开启的 AI 聊天框'
       });
-      const reviewBtn = el('button', 'agy-block-btn', '+ 批注');
 
       toolbar.appendChild(editBtn);
       toolbar.appendChild(chatBtn);
-      toolbar.appendChild(reviewBtn);
       wrapper.appendChild(toolbar);
 
       const contentBox = el('div', 'agy-block-content');
       renderSingleBlockContent(contentBox, block, callbacks);
       wrapper.appendChild(contentBox);
 
-      const isComplexVisualBlock =
-        block.type === 'mermaid' ||
-        block.type === 'mathBlock' ||
-        block.type === 'table' ||
-        block.type === 'code' ||
-        block.type === 'carousel';
-
-      // Mode 1: True In-Place Editing at Original Position (for heading, paragraph, alert, blockquote, list)
-      const startTrueInPlaceEditing = () => {
-        if (wrapper.classList.contains('is-editing-inplace') || wrapper.classList.contains('is-editing')) {
-          return;
-        }
-        wrapper.classList.add('is-editing-inplace');
-
-        const currentSlice =
-          callbacks && typeof callbacks.getBlockMarkdown === 'function'
-            ? callbacks.getBlockMarkdown(block.startLine, block.endLine)
-            : block.rawMarkdown || '';
-
-        let hostEl = contentBox;
-        let initialValue = currentSlice;
-        let serializeValue = (val) => val;
-
-        if (block.type === 'heading') {
-          const hEl = contentBox.querySelector('.agy-heading');
-          if (hEl) {
-            hostEl = hEl;
-          }
-          initialValue = block.text || currentSlice.replace(/^\s*#{1,6}\s+/, '');
-          const hashes = '#'.repeat(Math.min(6, Math.max(1, block.level || 1)));
-          serializeValue = (val) => {
-            const trimmed = val.replace(/\r?\n/g, ' ').trim();
-            if (/^\s*#{1,6}\s+/.test(trimmed)) {
-              return trimmed;
-            }
-            return `${hashes} ${trimmed}`;
-          };
-        } else if (block.type === 'alert') {
-          const alertBody = contentBox.querySelector('.agy-alert-body');
-          if (alertBody) {
-            hostEl = alertBody;
-          }
-          initialValue = block.body || '';
-          serializeValue = (val) => {
-            const quotedBody = String(val || '')
-              .split('\n')
-              .map((lineStr) => `> ${lineStr}`)
-              .join('\n');
-            return `> [!${block.alertType}]\n${quotedBody}`;
-          };
-        } else if (block.type === 'blockquote') {
-          const bqEl = contentBox.querySelector('.agy-blockquote');
-          if (bqEl) {
-            hostEl = bqEl;
-          }
-          initialValue = block.body || '';
-          serializeValue = (val) =>
-            String(val || '')
-              .split('\n')
-              .map((lineStr) => `> ${lineStr}`)
-              .join('\n');
-        } else if (block.type === 'paragraph') {
-          const pEl = contentBox.querySelector('.agy-p');
-          if (pEl) {
-            hostEl = pEl;
-          }
-          initialValue = currentSlice;
-        }
-
-        const inplaceInput = el('textarea', 'agy-inplace-editor', null, {
-          rows: Math.max(1, initialValue.split('\n').length)
-        });
-        inplaceInput.value = initialValue;
-
-        const autoFitHeight = () => {
-          inplaceInput.style.height = 'auto';
-          if (inplaceInput.scrollHeight > 0) {
-            inplaceInput.style.height = `${inplaceInput.scrollHeight}px`;
-          }
-        };
-
-        hostEl.replaceChildren(inplaceInput);
-        autoFitHeight();
-        inplaceInput.focus();
-
-        let activeStart = block.startLine;
-        let activeEnd = block.endLine;
-        let finished = false;
-
-        inplaceInput.addEventListener('input', () => {
-          autoFitHeight();
-          const updatedMd = serializeValue(inplaceInput.value);
-          if (callbacks && typeof callbacks.onBlockLiveEdit === 'function') {
-            const newEnd = callbacks.onBlockLiveEdit(activeStart, activeEnd, updatedMd);
-            if (typeof newEnd === 'number') {
-              activeEnd = newEnd;
-              wrapper.setAttribute('data-end-line', String(activeEnd + 1));
-            }
-          }
-        });
-
-        const finishInPlace = () => {
-          if (finished) return;
-          finished = true;
-          if (typeof document !== 'undefined' && document.removeEventListener) {
-            document.removeEventListener('mousedown', onOutsideMouseDown, true);
-          }
-          wrapper.classList.remove('is-editing-inplace');
-          if (callbacks && typeof callbacks.onBlockEditCommit === 'function') {
-            callbacks.onBlockEditCommit(true);
-          }
-        };
-
-        const onOutsideMouseDown = (ev) => {
-          if (!wrapper.contains(ev.target)) {
-            finishInPlace();
-          }
-        };
-
-        if (typeof document !== 'undefined' && document.addEventListener) {
-          document.addEventListener('mousedown', onOutsideMouseDown, true);
-        }
-
-        inplaceInput.addEventListener('blur', () => {
-          setTimeout(() => {
-            finishInPlace();
-          }, 10);
-        });
-      };
-
-      // Mode 2: Live Source + Live Preview Box Editing (for Mermaid, Math Block, Table, Code, Carousel)
-      const startBoxLiveEditing = () => {
-        if (wrapper.classList.contains('is-editing') || wrapper.classList.contains('is-editing-inplace')) {
+      const startInPlaceEditing = () => {
+        if (wrapper.classList.contains('is-editing')) {
           return;
         }
         wrapper.classList.add('is-editing');
@@ -2804,14 +2635,14 @@
           ev.stopPropagation();
           finishEditing();
         });
-      };
 
-      const startInPlaceEditing = () => {
-        if (isComplexVisualBlock) {
-          startBoxLiveEditing();
-        } else {
-          startTrueInPlaceEditing();
-        }
+        textarea.addEventListener('keydown', (ev) => {
+          if (ev.key === 'Escape' || ((ev.ctrlKey || ev.metaKey) && ev.key === 'Enter')) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            finishEditing();
+          }
+        });
       };
 
       editBtn.addEventListener('click', (ev) => {
@@ -2826,36 +2657,27 @@
         }
       });
 
-      reviewBtn.addEventListener('click', (ev) => {
-        ev.stopPropagation();
-        if (callbacks && typeof callbacks.onOpenReviewModal === 'function') {
-          callbacks.onOpenReviewModal(
-            block.text || `${block.type} (L${startLine1}-L${endLine1})`,
-            block.rawMarkdown || '',
-            startLine1,
-            endLine1
-          );
-        }
-      });
-
-      // Click directly on regular content blocks (when not dragging a text selection) to edit directly in-place!
+      // Click directly on text blocks (when not dragging a text selection) or double-click any block to edit in place!
       wrapper.addEventListener('click', (ev) => {
-        if (wrapper.classList.contains('is-editing') || wrapper.classList.contains('is-editing-inplace')) return;
+        if (wrapper.classList.contains('is-editing')) return;
         const sel = typeof window !== 'undefined' && window.getSelection ? String(window.getSelection()).trim() : '';
         if (sel.length > 0) return;
         const targetTag = (ev.target && ev.target.tagName ? ev.target.tagName : '').toLowerCase();
         if (targetTag === 'a' || targetTag === 'button' || targetTag === 'input' || targetTag === 'textarea') {
           return;
         }
-        if (!isComplexVisualBlock && block.type !== 'hr') {
-          startTrueInPlaceEditing();
+        if (
+          block.type === 'paragraph' ||
+          block.type === 'heading' ||
+          block.type === 'blockquote' ||
+          block.type === 'alert'
+        ) {
+          startInPlaceEditing();
         }
       });
 
       wrapper.addEventListener('dblclick', (ev) => {
-        if (wrapper.classList.contains('is-editing') || wrapper.classList.contains('is-editing-inplace')) return;
-        const sel = typeof window !== 'undefined' && window.getSelection ? String(window.getSelection()).trim() : '';
-        if (sel.length > 0 && !isComplexVisualBlock) return;
+        if (wrapper.classList.contains('is-editing')) return;
         ev.stopPropagation();
         startInPlaceEditing();
       });
@@ -2888,31 +2710,13 @@
       viewMode: 'preview',
       showOutline: true,
       aiCompanionEnabled: false,
-      initializedConfig: false,
-      reviewHeading: '',
-      reviewQuote: '',
-      reviewStartLine: 1,
-      reviewEndLine: 1
+      initializedConfig: false
     };
 
-    // Build Top Header Bar
+    // Build Top Header Bar (only AI platform toggles + outline toggle)
     const topbar = el('header', 'agy-topbar');
-    const topLeft = el('div', 'agy-topbar-left');
-    const badge = el('span', 'agy-badge', '✦ ARTIFACT');
-    const fileTitle = el('span', 'agy-filename', state.fileName);
     const dirtyDot = el('span', 'agy-dirty-dot', null, { title: '有未保存的更改 (Ctrl+S 保存)' });
     dirtyDot.style.display = 'none';
-    topLeft.appendChild(badge);
-    topLeft.appendChild(fileTitle);
-    topLeft.appendChild(dirtyDot);
-
-    const topCenter = el('div', 'agy-topbar-center');
-    const btnPreview = el('button', 'agy-mode-btn active', '预览·直编 (Live Preview)');
-    const btnSplit = el('button', 'agy-mode-btn', '分栏源码 (Split)');
-    const btnSource = el('button', 'agy-mode-btn', '纯源码 (Source)');
-    topCenter.appendChild(btnPreview);
-    topCenter.appendChild(btnSplit);
-    topCenter.appendChild(btnSource);
 
     const topRight = el('div', 'agy-topbar-right');
 
@@ -2950,16 +2754,10 @@
     });
 
     const btnOutline = el('button', 'agy-action-btn', '☰ 目录大纲');
-    const btnNative = el('button', 'agy-action-btn primary', '✦ 原生内置视图 (jetski)');
-    btnNative.setAttribute('title', '调用 Antigravity IDE 原生内置 antigravity.artifactEditor 打开当前文档');
-    const btnTextEditor = el('button', 'agy-action-btn', '⟨/⟩ 文本编辑器');
+    topRight.appendChild(dirtyDot);
     topRight.appendChild(aiPlatformGroup);
     topRight.appendChild(btnOutline);
-    topRight.appendChild(btnNative);
-    topRight.appendChild(btnTextEditor);
 
-    topbar.appendChild(topLeft);
-    topbar.appendChild(topCenter);
     topbar.appendChild(topRight);
 
     // Main Workspace Container
@@ -2998,38 +2796,13 @@
     selPlatformWrap.style.display = 'inline-flex';
     selPlatformWrap.style.gap = '5px';
     selPlatformWrap.style.flexWrap = 'wrap';
-    const selReviewBtn = el('button', 'agy-selection-pill-btn secondary', '+ 批注');
     selectionBar.appendChild(selRangeBadge);
     selectionBar.appendChild(selPlatformWrap);
-    selectionBar.appendChild(selReviewBtn);
 
-    // Floating Review Modal
-    const reviewModal = el('div', 'agy-review-modal hidden');
-    const reviewHeader = el('div', 'agy-review-header');
-    const reviewTitle = el('span', '', '添加 Artifact 章节批注');
-    const reviewCloseBtn = el('button', 'agy-mermaid-btn', '✕');
-    reviewHeader.appendChild(reviewTitle);
-    reviewHeader.appendChild(reviewCloseBtn);
-    const reviewQuoteBox = el('div', 'agy-review-quote');
-    const reviewInput = el('textarea', 'agy-review-input', '', {
-      placeholder: '输入针对该章节的修改意见或批注...'
-    });
-    const reviewActions = el('div', 'agy-review-actions');
-    const reviewSubmitBtn = el('button', 'agy-action-btn primary', '发送至聊天框并复制');
-    reviewActions.appendChild(reviewSubmitBtn);
-    reviewModal.appendChild(reviewHeader);
-    reviewModal.appendChild(reviewQuoteBox);
-    reviewModal.appendChild(reviewInput);
-    reviewModal.appendChild(reviewActions);
-
-    root.replaceChildren(topbar, workspace, selectionBar, reviewModal);
+    root.replaceChildren(topbar, workspace, selectionBar);
 
     function applyViewMode(mode) {
       state.viewMode = mode;
-      btnPreview.classList.toggle('active', mode === 'preview');
-      btnSplit.classList.toggle('active', mode === 'split');
-      btnSource.classList.toggle('active', mode === 'source');
-
       editorPane.classList.toggle('hidden', mode === 'preview');
       previewPane.classList.toggle('hidden', mode === 'source');
     }
@@ -3039,9 +2812,6 @@
       outlineAside.classList.toggle('hidden', !visible);
     }
 
-    btnPreview.addEventListener('click', () => applyViewMode('preview'));
-    btnSplit.addEventListener('click', () => applyViewMode('split'));
-    btnSource.addEventListener('click', () => applyViewMode('source'));
     btnOutline.addEventListener('click', () => applyOutlineVisibility(!state.showOutline));
 
     /**
@@ -3083,22 +2853,6 @@
       }
     }
     refreshAiPlatformUi();
-
-    btnNative.addEventListener('click', () => {
-      if (vscode) {
-        vscode.postMessage({ type: 'openNative' });
-      }
-    });
-
-    btnTextEditor.addEventListener('click', () => {
-      if (vscode) {
-        vscode.postMessage({ type: 'switchToTextEditor' });
-      }
-    });
-
-    reviewCloseBtn.addEventListener('click', () => {
-      reviewModal.classList.add('hidden');
-    });
 
     /**
      * Accurately resolve 1-based [startLineNumber, endLineNumber] from DOM selection or textarea selection.
@@ -3212,32 +2966,6 @@
       }, 20);
     });
 
-    selReviewBtn.addEventListener('click', (ev) => {
-      ev.stopPropagation();
-      selectionBar.classList.add('hidden');
-      callbacks.onOpenReviewModal(
-        `第 ${lastSelectionRange.startLineNumber}-${lastSelectionRange.endLineNumber} 行`,
-        lastSelectionRange.selectedText,
-        lastSelectionRange.startLineNumber,
-        lastSelectionRange.endLineNumber
-      );
-    });
-
-    reviewSubmitBtn.addEventListener('click', () => {
-      if (vscode && reviewInput.value.trim()) {
-        vscode.postMessage({
-          type: 'submitReviewComment',
-          heading: state.reviewHeading,
-          selectedText: state.reviewQuote,
-          startLineNumber: state.reviewStartLine,
-          endLineNumber: state.reviewEndLine,
-          comment: reviewInput.value.trim()
-        });
-        reviewInput.value = '';
-        reviewModal.classList.add('hidden');
-      }
-    });
-
     // Live editing in Split / Source mode
     let editTimer = null;
     function pushTextEditToExtension(newText, autoSave) {
@@ -3334,25 +3062,11 @@
         if (vscode) {
           vscode.postMessage({ type: 'copyText', text });
         }
-      },
-      onOpenReviewModal(headingText, quoteText, startLineNumber, endLineNumber) {
-        state.reviewHeading = headingText;
-        state.reviewQuote = quoteText || headingText;
-        state.reviewStartLine = startLineNumber || 1;
-        state.reviewEndLine = endLineNumber || state.reviewStartLine;
-        reviewTitle.textContent = `批注: ${headingText} (L${state.reviewStartLine}-L${state.reviewEndLine})`;
-        reviewQuoteBox.textContent = state.reviewQuote;
-        reviewModal.classList.remove('hidden');
-        reviewInput.focus();
       }
     };
 
     function renderDocument() {
-      fileTitle.textContent = state.fileName;
-      fileTitle.setAttribute('title', state.filePath);
       dirtyDot.style.display = state.isDirty ? 'inline-block' : 'none';
-      badge.textContent = state.isBrainArtifact ? '✦ BRAIN ARTIFACT' : '✦ PROJECT ARTIFACT';
-      badge.classList.toggle('is-brain', Boolean(state.isBrainArtifact));
 
       const ast = parseMarkdownToAst(state.text);
 
@@ -3442,7 +3156,7 @@
 
       if (!state.initializedConfig && msg.config) {
         state.initializedConfig = true;
-        applyViewMode(msg.config.defaultViewMode || 'preview');
+        applyViewMode('preview');
         applyOutlineVisibility(msg.config.showOutline !== false);
       }
 

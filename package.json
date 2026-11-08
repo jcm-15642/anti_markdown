@@ -2,7 +2,7 @@
   "name": "antigravity-markdown-viewer",
   "displayName": "Antigravity Markdown Viewer",
   "description": "Preview and edit any project Markdown (.md) file with Antigravity IDE's built-in Artifact Viewer (native bridge + standalone Custom Editor with direct in-preview live editing, draggable Mermaid, KaTeX math, Alerts, Carousels, file:// pills, and Copilot/Claude Code/Antigravity selection sync).",
-  "version": "1.2.1",
+  "version": "1.4.0",
   "publisher": "mazhao",
   "license": "MIT",
   "icon": "media/icon.png",
@@ -93,6 +93,30 @@
         "title": "配置默认 Markdown 编辑器模式 (Configure Default Markdown Editor)",
         "category": "Antigravity Markdown",
         "icon": "$(settings-gear)"
+      },
+      {
+        "command": "antiMarkdown.sendSelectionTo.vscode",
+        "title": "发送选中内容到 VS Code Chat (Send Selection to VS Code Chat)",
+        "category": "Antigravity AI",
+        "icon": "$(comment-discussion)"
+      },
+      {
+        "command": "antiMarkdown.sendSelectionTo.antigravity",
+        "title": "发送选中内容到 Antigravity (Send Selection to Antigravity)",
+        "category": "Antigravity AI",
+        "icon": "$(sparkle)"
+      },
+      {
+        "command": "antiMarkdown.sendSelectionTo.claude",
+        "title": "发送选中内容到 Claude Code (Send Selection to Claude Code)",
+        "category": "Antigravity AI",
+        "icon": "$(star-full)"
+      },
+      {
+        "command": "antiMarkdown.sendSelectionTo.codex",
+        "title": "发送选中内容到 Codex (Send Selection to Codex)",
+        "category": "Antigravity AI",
+        "icon": "$(circle-large-outline)"
       }
     ],
     "menus": {
@@ -145,6 +169,26 @@
           "command": "antiMarkdown.switchEditor",
           "when": "editorLangId == markdown",
           "group": "navigation@3"
+        },
+        {
+          "command": "antiMarkdown.sendSelectionTo.vscode",
+          "when": "editorHasSelection && antiMarkdown.ai.vscode",
+          "group": "0_antiAi@1"
+        },
+        {
+          "command": "antiMarkdown.sendSelectionTo.antigravity",
+          "when": "editorHasSelection && antiMarkdown.ai.antigravity",
+          "group": "0_antiAi@2"
+        },
+        {
+          "command": "antiMarkdown.sendSelectionTo.claude",
+          "when": "editorHasSelection && antiMarkdown.ai.claude",
+          "group": "0_antiAi@3"
+        },
+        {
+          "command": "antiMarkdown.sendSelectionTo.codex",
+          "when": "editorHasSelection && antiMarkdown.ai.codex",
+          "group": "0_antiAi@4"
         }
       ]
     },
@@ -212,6 +256,11 @@
             "codex"
           ],
           "description": "Enabled AI chat platforms shown in the top menu bar and unfolded in the floating selection capsule."
+        },
+        "antiMarkdown.selectionHoverCapsule": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show the floating AI capsule (Hover: VS Code / Antigravity / Claude Code / Codex) over the current selection in any file."
         }
       }
     }

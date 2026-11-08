@@ -388,6 +388,28 @@ function createDocumentPayload(document, webview, isSidePreview) {
   };
 }
 
+const Module = require('module');
+
+const AI_PLATFORM_IDS = ['vscode', 'antigravity', 'claude', 'codex'];
+const AI_PLATFORM_META = {
+  vscode: { icon: '💬', label: 'VS Code' },
+  antigravity: { icon: '✦', label: 'Antigravity' },
+  claude: { icon: '✴', label: 'Claude Code' },
+  codex: { icon: '◎', label: 'Codex' }
+};
+
+/**
+ * Read enabled AI platforms from configuration.
+ * @returns {string[]}
+ */
+function getEnabledAiPlatforms() {
+  const raw = vscode.workspace.getConfiguration('antiMarkdown').get('enabledAiPlatforms', AI_PLATFORM_IDS);
+  if (!Array.isArray(raw)) {
+    return AI_PLATFORM_IDS.slice();
+  }
+  return AI_PLATFORM_IDS.filter((id) => raw.includes(id));
+}
+
 /**
  * Compute a valid 0-based vscode.Selection for 1-based [startLineNumber, endLineNumber].
  * @param {vscode.TextDocument} document
@@ -398,8 +420,8 @@ function createDocumentPayload(document, webview, isSidePreview) {
  */
 function buildDocumentSelection(document, startLineNumber, endLineNumber, selectedText) {
   const maxLine = Math.max(0, document.lineCount - 1);
-  let zeroStart = Math.min(maxLine, Math.max(0, (Number(startLineNumber) || 1) - 1));
-  let zeroEnd = Math.min(maxLine, Math.max(zeroStart, (Number(endLineNumber) || startLineNumber || 1) - 1));
+  const zeroStart = Math.min(maxLine, Math.max(0, (Number(startLineNumber) || 1) - 1));
+  const zeroEnd = Math.min(maxLine, Math.max(zeroStart, (Number(endLineNumber) || startLineNumber || 1) - 1));
   let startChar = 0;
   let endChar = document.lineAt(zeroEnd).text.length;
 
@@ -429,47 +451,81 @@ function buildDocumentSelection(document, startLineNumber, endLineNumber, select
 }
 
 /**
- * Find any temporary raw text editor tab (`TabInputText`) for the given document URI.
- * @param {vscode.Uri} docUri
- * @returns {vscode.Tab[]}
+ * Temporarily expose a synthetic `activeTextEditor` on a target extension's `vscode.window`
+ * during `fn()` so commands like `claude-vscode.insertAtMention` and `chatgpt.addToThread`
+ * read `{ document, selection }` directly without ever calling `showTextDocument`.
+ * @param {string} extensionId
+ * @param {object} syntheticEditor
+ * @param {() => Promise<any>} fn
  */
-function findRawTextTabsForUri(docUri) {
-  const targetStr = docUri.toString();
-  const matches = [];
+async function withSyntheticActiveEditor(extensionId, syntheticEditor, fn) {
+  const patchedWindows = [];
+  const patchWindow = (winObj) => {
+    if (!winObj || patchedWindows.some((entry) => entry.winObj === winObj)) {
+      return;
+    }
+    try {
+      const origDesc = Object.getOwnPropertyDescriptor(winObj, 'activeTextEditor');
+      Object.defineProperty(winObj, 'activeTextEditor', {
+        get: () => syntheticEditor,
+        configurable: true,
+        enumerable: true
+      });
+      patchedWindows.push({ winObj, origDesc });
+    } catch (_err) {
+      // Ignore if non-configurable
+    }
+  };
+
   try {
-    const groups = vscode.window.tabGroups?.all || [];
-    for (const group of groups) {
-      for (const tab of group.tabs || []) {
-        const input = tab.input;
-        if (
-          input &&
-          typeof input === 'object' &&
-          input.uri instanceof vscode.Uri &&
-          typeof input.viewType !== 'string' &&
-          input.uri.toString() === targetStr
-        ) {
-          matches.push(tab);
+    patchWindow(vscode.window);
+    const ext = vscode.extensions.getExtension(extensionId);
+    if (ext) {
+      if (!ext.isActive) {
+        try {
+          await ext.activate();
+        } catch (_err) {
+          // Ignore activation error
+        }
+      }
+      if (ext.extensionPath) {
+        try {
+          const extRequire = Module.createRequire(path.join(ext.extensionPath, 'package.json'));
+          const extVscode = extRequire('vscode');
+          if (extVscode && extVscode.window) {
+            patchWindow(extVscode.window);
+          }
+        } catch (_err) {
+          // Ignore require error
         }
       }
     }
-  } catch (_err) {
-    // Ignore on older host versions
+    return await fn();
+  } finally {
+    for (const { winObj, origDesc } of patchedWindows) {
+      try {
+        if (origDesc) {
+          Object.defineProperty(winObj, 'activeTextEditor', origDesc);
+        }
+      } catch (_err) {
+        // Ignore restore error
+      }
+    }
   }
-  return matches;
 }
 
 /**
  * Send the selected file + line range to a single specific AI platform
- * (`vscode`, `antigravity`, `claude`, or `codex`) without leaving a raw text editor open.
+ * (`vscode`, `antigravity`, `claude`, or `codex`) without ever opening a raw text editor.
  * @param {vscode.TextDocument} document
- * @param {vscode.WebviewPanel} webviewPanel
+ * @param {vscode.WebviewPanel | null} webviewPanel
  * @param {object} msg
  */
 async function sendSelectionToSinglePlatform(document, webviewPanel, msg) {
   const startLineNumber = Math.max(1, Number(msg.startLineNumber) || 1);
   const endLineNumber = Math.max(startLineNumber, Number(msg.endLineNumber) || startLineNumber);
   const selection = buildDocumentSelection(document, startLineNumber, endLineNumber, msg.selectedText);
-  const cleanUri = normalizeMarkdownUri(document.uri);
+  const cleanUri = normalizeMarkdownUri(document.uri) || document.uri;
   const fileUriStr = cleanUri.toString();
   const availableCommands = await vscode.commands.getCommands(true);
 
@@ -486,7 +542,7 @@ async function sendSelectionToSinglePlatform(document, webviewPanel, msg) {
     }
   }
 
-  // 1. Antigravity IDE: direct RPC command, never touches any raw text editor
+  // 1. Antigravity IDE: direct RPC command
   if (platform === 'antigravity') {
     if (availableCommands.includes('antigravity.addContext')) {
       try {
@@ -500,83 +556,207 @@ async function sendSelectionToSinglePlatform(document, webviewPanel, msg) {
         });
         return;
       } catch (_err) {
-        // Fallback below if command failed
+        // Ignore
       }
     }
     vscode.window.showWarningMessage('当前环境未检测到 Antigravity IDE 内置聊天接口 (antigravity.addContext)。');
     return;
   }
 
-  // For VS Code Copilot, Claude Code, and OpenAI Codex:
-  // Their commands inspect `vscode.window.activeTextEditor` and `activeTextEditor.selection`.
-  // If no raw text editor is already open, we perform a fast transient handoff and immediately
-  // close the temporary raw text editor tab so the user stays in the preview.
-  const preExistingTabs = findRawTextTabsForUri(document.uri);
-  let targetEditor = vscode.window.visibleTextEditors.find(
-    (ed) => ed.document && ed.document.uri.toString() === document.uri.toString()
-  );
-  const openedTransiently = !targetEditor && preExistingTabs.length === 0;
-
-  try {
-    targetEditor = await vscode.window.showTextDocument(document, {
-      viewColumn: targetEditor ? targetEditor.viewColumn : webviewPanel.viewColumn || vscode.ViewColumn.Active,
-      preview: true,
-      preserveFocus: false
-    });
-    targetEditor.selection = selection;
-    targetEditor.selections = [selection];
-    targetEditor.revealRange(
-      new vscode.Range(selection.start, selection.end),
-      vscode.TextEditorRevealType.InCenterIfOutsideViewport
-    );
-
-    // Wait briefly so VS Code extension host dispatches onDidChangeActiveTextEditor / Selection
-    await new Promise((resolve) => setTimeout(resolve, 45));
-
-    if (platform === 'claude') {
-      if (availableCommands.includes('claude-vscode.insertAtMention')) {
-        await vscode.commands.executeCommand('claude-vscode.insertAtMention');
-      } else if (availableCommands.includes('claude-code.insertAtMentioned')) {
-        await vscode.commands.executeCommand('claude-code.insertAtMentioned');
-      } else {
-        vscode.window.showWarningMessage('当前环境未检测到 Claude Code 插件 (claude-vscode.insertAtMention)。');
-      }
-    } else if (platform === 'codex') {
-      if (availableCommands.includes('chatgpt.addToThread')) {
-        await vscode.commands.executeCommand('chatgpt.addToThread');
-      } else {
-        vscode.window.showWarningMessage('当前环境未检测到 OpenAI Codex 插件 (chatgpt.addToThread)。');
-      }
-    } else if (platform === 'vscode') {
-      if (availableCommands.includes('workbench.action.chat.attachSelection')) {
-        await vscode.commands.executeCommand('workbench.action.chat.attachSelection');
-      }
+  // 2. VS Code Built-in Chat / Copilot: pass file + range directly to attachSelection
+  if (platform === 'vscode') {
+    if (availableCommands.includes('workbench.action.chat.attachSelection')) {
+      const endLineIdx = Math.min(Math.max(0, document.lineCount - 1), endLineNumber - 1);
+      const endCol = Math.max(1, document.lineAt(endLineIdx).text.length + 1);
+      await vscode.commands.executeCommand(
+        'workbench.action.chat.attachSelection',
+        null,
+        [
+          {
+            _parent: { resource: cleanUri },
+            _range: {
+              startLineNumber,
+              startColumn: 1,
+              endLineNumber,
+              endColumn: endCol
+            }
+          }
+        ]
+      );
       if (availableCommands.includes('workbench.action.chat.open')) {
         await vscode.commands.executeCommand('workbench.action.chat.open');
       }
+    } else {
+      vscode.window.showWarningMessage('当前环境未检测到 VS Code Chat (workbench.action.chat.attachSelection)。');
     }
+    return;
+  }
 
-    await new Promise((resolve) => setTimeout(resolve, 65));
-  } catch (_err) {
-    // Ignore command execution errors
-  } finally {
-    if (openedTransiently) {
-      const postTabs = findRawTextTabsForUri(document.uri);
-      for (const tab of postTabs) {
-        try {
-          await vscode.window.tabGroups.close(tab);
-        } catch (_err) {
-          // Ignore tab close error
-        }
+  // Build synthetic TextEditor with normalized file URI so Claude Code & Codex read it directly
+  // without ever calling vscode.window.showTextDocument
+  const syntheticDocument = new Proxy(document, {
+    get(target, prop, receiver) {
+      if (prop === 'uri') {
+        return cleanUri;
       }
-      try {
-        webviewPanel.reveal(webviewPanel.viewColumn, true);
-      } catch (_err) {
-        // Ignore
+      if (prop === 'fileName') {
+        return cleanUri.fsPath || target.fileName;
       }
+      const val = Reflect.get(target, prop, receiver);
+      return typeof val === 'function' ? val.bind(target) : val;
+    }
+  });
+
+  const syntheticEditor = {
+    document: syntheticDocument,
+    selection,
+    selections: [selection],
+    visibleRanges: [new vscode.Range(selection.start, selection.end)],
+    options: { tabSize: 2, insertSpaces: true },
+    viewColumn: (webviewPanel && webviewPanel.viewColumn) || vscode.ViewColumn.One
+  };
+
+  // 3. Claude Code: execute native claude-vscode.insertAtMention with syntheticEditor
+  if (platform === 'claude') {
+    if (availableCommands.includes('claude-vscode.insertAtMention')) {
+      await withSyntheticActiveEditor('anthropic.claude-code', syntheticEditor, async () => {
+        await vscode.commands.executeCommand('claude-vscode.insertAtMention');
+      });
+    } else if (availableCommands.includes('claude-code.insertAtMentioned')) {
+      await withSyntheticActiveEditor('anthropic.claude-code', syntheticEditor, async () => {
+        await vscode.commands.executeCommand('claude-code.insertAtMentioned');
+      });
+    } else {
+      vscode.window.showWarningMessage('当前环境未检测到 Claude Code 插件 (claude-vscode.insertAtMention)。');
+    }
+    return;
+  }
+
+  // 4. OpenAI Codex: execute native chatgpt.addToThread with syntheticEditor
+  if (platform === 'codex') {
+    if (availableCommands.includes('chatgpt.addToThread')) {
+      await withSyntheticActiveEditor('openai.chatgpt', syntheticEditor, async () => {
+        await vscode.commands.executeCommand('chatgpt.addToThread');
+      });
+    } else {
+      vscode.window.showWarningMessage('当前环境未检测到 OpenAI Codex 插件 (chatgpt.addToThread)。');
     }
   }
 }
+
+/**
+ * Universal Floating AI Capsule for ALL files opened in standard text editors:
+ * Pops up a floating Hover capsule (`📌 Lx-y  💬 VS Code  ✦ Antigravity  ✴ Claude Code  ◎ Codex`)
+ * directly over the selected text whenever text is selected in any file.
+ * @param {vscode.ExtensionContext} context
+ */
+function registerUniversalSelectionCapsule(context) {
+  let hoverTimer = null;
+
+  const updateContextKeys = () => {
+    const enabled = getEnabledAiPlatforms();
+    AI_PLATFORM_IDS.forEach((id) => {
+      vscode.commands.executeCommand('setContext', `antiMarkdown.ai.${id}`, enabled.includes(id));
+    });
+  };
+
+  context.subscriptions.push(
+    vscode.languages.registerHoverProvider(
+      [{ scheme: 'file' }, { scheme: 'untitled' }, { scheme: 'vscode-remote' }],
+      {
+        provideHover(document, position) {
+          const editor = vscode.window.activeTextEditor;
+          if (!editor || editor.document !== document || editor.selection.isEmpty) {
+            return null;
+          }
+          const sel = editor.selection;
+          const startLine0 = sel.start.line;
+          const endLine0 = sel.end.character === 0 && sel.end.line > startLine0 ? sel.end.line - 1 : sel.end.line;
+          if (position.line < startLine0 || position.line > endLine0 + 1) {
+            return null;
+          }
+
+          if (vscode.workspace.getConfiguration('antiMarkdown').get('selectionHoverCapsule', true) === false) {
+            return null;
+          }
+          const enabled = getEnabledAiPlatforms();
+          if (enabled.length === 0) {
+            return null;
+          }
+
+          const start1 = startLine0 + 1;
+          const end1 = endLine0 + 1;
+          const pills = enabled.map((id) => {
+            const meta = AI_PLATFORM_META[id];
+            return `[${meta.icon} ${meta.label}](command:antiMarkdown.sendSelectionTo.${id} "仅发送到 ${meta.label} 聊天框")`;
+          });
+
+          const md = new vscode.MarkdownString(
+            `📌 **L${start1}-${end1}** &nbsp;&nbsp; ${pills.join(' &nbsp;·&nbsp; ')}`,
+            true
+          );
+          md.isTrusted = true;
+          return new vscode.Hover(md, new vscode.Range(sel.start, sel.end));
+        }
+      }
+    ),
+    vscode.window.onDidChangeTextEditorSelection((ev) => {
+      if (ev.textEditor !== vscode.window.activeTextEditor) {
+        return;
+      }
+      if (hoverTimer) {
+        clearTimeout(hoverTimer);
+        hoverTimer = null;
+      }
+      if (ev.textEditor.selection.isEmpty) {
+        vscode.commands.executeCommand('editor.action.hideHover').then(undefined, () => {});
+        return;
+      }
+      hoverTimer = setTimeout(() => {
+        hoverTimer = null;
+        const active = vscode.window.activeTextEditor;
+        if (active && !active.selection.isEmpty) {
+          vscode.commands
+            .executeCommand('editor.action.showHover', { focus: 'noAutoFocus' })
+            .then(undefined, () => {});
+        }
+      }, 160);
+    }),
+    vscode.workspace.onDidChangeConfiguration((ev) => {
+      if (ev.affectsConfiguration('antiMarkdown')) {
+        updateContextKeys();
+      }
+    })
+  );
+
+  AI_PLATFORM_IDS.forEach((id) => {
+    context.subscriptions.push(
+      vscode.commands.registerCommand(`antiMarkdown.sendSelectionTo.${id}`, async () => {
+        const editor = vscode.window.activeTextEditor;
+        if (!editor || editor.selection.isEmpty) {
+          vscode.window.showInformationMessage('请先在编辑器中选中文本。');
+          return;
+        }
+        const s = editor.selection.start.line + 1;
+        let e = editor.selection.end.line + 1;
+        if (editor.selection.end.character === 0 && e > s) {
+          e -= 1;
+        }
+        const selectedText = editor.document.getText(editor.selection);
+        vscode.commands.executeCommand('editor.action.hideHover').then(undefined, () => {});
+        await sendSelectionToSinglePlatform(editor.document, null, {
+          platform: id,
+          startLineNumber: s,
+          endLineNumber: e,
+          selectedText
+        });
+      })
+    );
+  });
+
+  updateContextKeys();
+}
+
 
 /**
  * Attach message handlers between a WebviewPanel and a TextDocument.
@@ -742,48 +922,6 @@ function wireWebviewToDocument(webviewPanel, document, context, isSidePreview) {
       case 'sendSelectionToPlatform':
       case 'addSelectionToChat': {
         await sendSelectionToSinglePlatform(document, webviewPanel, msg);
-        break;
-      }
-
-      case 'submitReviewComment': {
-        const comment = typeof msg.comment === 'string' ? msg.comment.trim() : '';
-        const selectedText = typeof msg.selectedText === 'string' ? msg.selectedText.trim() : '';
-        const sectionHeading = typeof msg.heading === 'string' ? msg.heading.trim() : '';
-        const startLineNumber = Math.max(1, Number(msg.startLineNumber) || 1);
-        const endLineNumber = Math.max(startLineNumber, Number(msg.endLineNumber) || startLineNumber);
-        if (!comment) {
-          return;
-        }
-        const cleanUri = normalizeMarkdownUri(document.uri);
-        const filePath = cleanUri.fsPath || cleanUri.path;
-        const formattedReview = [
-          `[Artifact Review: ${path.basename(filePath)}${sectionHeading ? ' > ' + sectionHeading : ''}](file://${filePath}#L${startLineNumber}-L${endLineNumber})`,
-          selectedText ? `> ${selectedText.split('\n').join('\n> ')}` : '',
-          `Comment: ${comment}`
-        ].filter(Boolean).join('\n');
-
-        await vscode.env.clipboard.writeText(formattedReview);
-        try {
-          await vscode.commands.executeCommand(
-            'antigravity.addContext',
-            {
-              type: 'file',
-              uri: cleanUri.toString(),
-              range: {
-                startLineNumber,
-                endLineNumber
-              }
-            },
-            comment
-          );
-          vscode.window.showInformationMessage(
-            '已将选中文件行号与批注直接添加到 Antigravity 侧边聊天框！'
-          );
-        } catch (_err) {
-          vscode.window.showInformationMessage(
-            '已生成 Artifact 批注并复制到剪贴板（可直接粘贴至 Antigravity 对话框）。'
-          );
-        }
         break;
       }
 
@@ -980,6 +1118,9 @@ async function configureDefaultAssociation() {
  */
 function activate(context) {
   const provider = new AntigravityArtifactEditorProvider(context);
+
+  // Floating AI capsule for selections in ALL files (CodeLens + status bar + context menu)
+  registerUniversalSelectionCapsule(context);
 
   context.subscriptions.push(
     vscode.window.registerCustomEditorProvider(VIEW_TYPE, provider, {
