@@ -2,7 +2,7 @@
   "name": "antigravity-markdown-viewer",
   "displayName": "Antigravity Markdown Viewer",
   "description": "Preview and edit any project Markdown (.md) file with Antigravity IDE's built-in Artifact Viewer (native bridge + standalone Custom Editor with direct in-preview live editing, draggable Mermaid, KaTeX math, Alerts, Carousels, file:// pills, and Copilot/Claude Code/Antigravity selection sync).",
-  "version": "1.7.2",
+  "version": "1.7.3",
   "publisher": "mazhao",
   "license": "MIT",
   "icon": "media/icon.png",

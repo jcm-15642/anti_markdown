@@ -745,6 +745,7 @@ const PLATFORM_PILL_WIDTHS = {
  */
 function registerUniversalSelectionCapsule(context) {
   let hoverTimer = null;
+  let isAdjusting = false;
 
   const updateContextKeys = () => {
     const enabled = getEnabledAiPlatforms();
@@ -831,7 +832,7 @@ function registerUniversalSelectionCapsule(context) {
       }
     ),
     vscode.window.onDidChangeTextEditorSelection((ev) => {
-      if (ev.textEditor !== vscode.window.activeTextEditor) {
+      if (isAdjusting || ev.textEditor !== vscode.window.activeTextEditor) {
         return;
       }
       if (hoverTimer) {
@@ -842,17 +843,42 @@ function registerUniversalSelectionCapsule(context) {
         vscode.commands.executeCommand('editor.action.hideHover').then(undefined, () => {});
         return;
       }
-      // Snappy 60ms debounce: provides instant responsiveness across all file types
+      // Snappy 50ms debounce: provides instant responsiveness across all file types
       // while preventing mouse drag jitter
       hoverTimer = setTimeout(() => {
         hoverTimer = null;
         const active = vscode.window.activeTextEditor;
-        if (active && !active.selection.isEmpty) {
-          vscode.commands
-            .executeCommand('editor.action.showHover', { focus: 'noAutoFocus' })
-            .then(undefined, () => {});
+        if (!active || active.selection.isEmpty) {
+          return;
         }
-      }, 60);
+
+        const sel = active.selection;
+        const firstVisibleLine = (active.visibleRanges && active.visibleRanges.length > 0)
+          ? active.visibleRanges[0].start.line
+          : 0;
+
+        // For multi-line selections:
+        // Monaco's `showHover` internal command anchors strictly to `editor.getPosition()` (active.selection.active).
+        // If `active` is on the last line (endLine0), Monaco places the hover ABOVE endLine0 (on line endLine0 - 1),
+        // which covers the selected line(s) above the last line!
+        // By aligning `active` to `sel.start` when there is space above, Monaco anchors to `startLine0` and places
+        // the hover ABOVE `startLine0` (on line startLine0 - 1), completely above the entire multi-line selection!
+        if (sel.start.line < sel.end.line) {
+          const hasRoomAbove = (sel.start.line - firstVisibleLine) >= 2;
+          if (hasRoomAbove && sel.active.line > sel.start.line) {
+            isAdjusting = true;
+            try {
+              active.selection = new vscode.Selection(sel.end, sel.start);
+            } finally {
+              isAdjusting = false;
+            }
+          }
+        }
+
+        vscode.commands
+          .executeCommand('editor.action.showHover', { focus: 'noAutoFocus' })
+          .then(undefined, () => {});
+      }, 50);
     }),
     vscode.workspace.onDidChangeConfiguration((ev) => {
       if (ev.affectsConfiguration('antiMarkdown')) {
