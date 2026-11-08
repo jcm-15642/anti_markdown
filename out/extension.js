@@ -786,28 +786,28 @@ function registerUniversalSelectionCapsule(context) {
           const pills = enabled.map((id) => {
             const meta = AI_PLATFORM_META[id];
             const pillUri = PLATFORM_PILL_DATA_URIS[id];
-            const width = PLATFORM_PILL_WIDTHS[id] || 88;
-            return `[<img src="${pillUri}" width="${width}" height="24" alt="${meta.label}" style="display:inline-block;vertical-align:middle;" />](command:antiMarkdown.sendSelectionTo.${id} "仅发送到 ${meta.label} 聊天框")`;
+            return `[![${meta.label}](${pillUri})](command:antiMarkdown.sendSelectionTo.${id} "仅发送到 ${meta.label} 聊天框")`;
           });
 
+          // Pure CommonMark markdown: renders clean, clickable image buttons in a single horizontal row
+          // without any HTML <div> wrappers that break markdown link parsing and cause text leakage.
           const md = new vscode.MarkdownString(
-            `<div style="display:inline-flex;align-items:center;height:24px;line-height:24px;white-space:nowrap;"><img src="${rangeBadge.uri}" width="${rangeBadge.width}" height="24" style="display:inline-block;vertical-align:middle;" />&nbsp;${pills.join('&nbsp;')}&nbsp;</div>`,
-            true
+            `![L${start1}-${end1}](${rangeBadge.uri}) &nbsp; ${pills.join(' &nbsp; ')}`
           );
-          md.supportHtml = true;
           md.isTrusted = true;
 
-          // Determine placement to guarantee the capsule NEVER covers the selected text:
-          // Check visible viewport: if >= 2 visible lines exist above the selection, anchor at startLine0 (placed ABOVE).
-          // If the selection is near the top of the viewport (< 2 lines above), anchor at endLine0 (placed BELOW).
-          // A 0-width Range ensures ZERO distracting grey hover highlight over the user's text.
-          const visibleRanges = editor.visibleRanges;
-          const firstVisibleLine = visibleRanges && visibleRanges.length > 0 ? visibleRanges[0].start.line : 0;
-          const hasRoomAbove = (startLine0 - firstVisibleLine) >= 2;
-
-          const anchorLine = hasRoomAbove ? startLine0 : endLine0;
-          const anchorChar = hasRoomAbove ? sel.start.character : sel.end.character;
-          const anchorPos = new vscode.Position(anchorLine, anchorChar);
+          // Anchor at the trailing end of the selection with a 0-width Range:
+          // 1. Horizontally, the hover aligns at anchorCol (at or to the right of the selected text),
+          //    leaving the entire selected text uncovered to the left.
+          // 2. If the selection ends with newline (column 0 on next line), anchor at the end of the selected line.
+          // 3. A 0-width Range completely eliminates Monaco's grey hover highlight over the text.
+          let anchorLine = endLine0;
+          let anchorCol = sel.end.character;
+          if (sel.end.character === 0 && sel.end.line > startLine0) {
+            anchorLine = endLine0;
+            anchorCol = document.lineAt(endLine0).text.length;
+          }
+          const anchorPos = new vscode.Position(anchorLine, anchorCol);
           return new vscode.Hover(md, new vscode.Range(anchorPos, anchorPos));
         }
       }
@@ -830,9 +830,7 @@ function registerUniversalSelectionCapsule(context) {
         if (active && !active.selection.isEmpty) {
           vscode.commands
             .executeCommand('editor.action.showHover', { focus: 'noAutoFocus' })
-            .then(undefined, () => {
-              vscode.commands.executeCommand('editor.action.showHover').then(undefined, () => {});
-            });
+            .then(undefined, () => {});
         }
       }, 160);
     }),
