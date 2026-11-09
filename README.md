@@ -87,9 +87,9 @@
 ## 安装与使用 (Installation)
 
 ### 方式一：直接下载 VSIX 安装包（推荐）
-1. 前往 GitHub Releases 页面下载最新安装包：
+1. 前往 GitHub Releases 页面下载安装包：
    - 👉 **[下载最新版本 anti-markdown-1.7.7.vsix](https://github.com/jcm-15642/anti_markdown/releases/download/v1.7.7/anti-markdown-1.7.7.vsix)**
-   - 或在仓库中直接下载：[`anti-markdown-1.7.7.vsix`](https://github.com/jcm-15642/anti_markdown/raw/main/anti-markdown-1.7.7.vsix)
+   - 或在 [GitHub Releases 全部版本列表](https://github.com/jcm-15642/anti_markdown/releases) 中选择历史版本下载。
 2. **在编辑器中安装**：
    - 打开 VS Code / Antigravity IDE 扩展面板 (`Ctrl+Shift+X` / `Cmd+Shift+X`)；
    - 点击右上角 `...` 菜单，选择 **从 VSIX 安装... (Install from VSIX...)**；
